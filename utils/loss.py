@@ -701,7 +701,7 @@ class ComputeLossOTA:
                 continue
             p_obj = torch.cat(p_obj, dim=0)
             p_cls = torch.cat(p_cls, dim=0)
-            from_which_layer = torch.cat(from_which_layer, dim=0)
+            from_which_layer = torch.cat(from_which_layer, dim=0).to(targets.device)
             all_b = torch.cat(all_b, dim=0)
             all_a = torch.cat(all_a, dim=0)
             all_gj = torch.cat(all_gj, dim=0)
@@ -1211,6 +1211,7 @@ class ComputeLossAuxOTA:
         # Losses
         for i in range(self.nl):  # layer index, layer predictions
             pi = p[i]
+            
             pi_aux = p[i+self.nl]
             b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]  # image, anchor, gridy, gridx
             b_aux, a_aux, gj_aux, gi_aux = bs_aux[i], as_aux_[i], gjs_aux[i], gis_aux[i]  # image, anchor, gridy, gridx
@@ -1346,7 +1347,7 @@ class ComputeLossAuxOTA:
                 continue
             p_obj = torch.cat(p_obj, dim=0)
             p_cls = torch.cat(p_cls, dim=0)
-            from_which_layer = torch.cat(from_which_layer, dim=0)
+            from_which_layer = torch.cat(from_which_layer, dim=0).to(targets.device)
             all_b = torch.cat(all_b, dim=0)
             all_a = torch.cat(all_a, dim=0)
             all_gj = torch.cat(all_gj, dim=0)
@@ -1401,6 +1402,7 @@ class ComputeLossAuxOTA:
             fg_mask_inboxes = matching_matrix.sum(0) > 0.0
             matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
         
+            
             from_which_layer = from_which_layer[fg_mask_inboxes]
             all_b = all_b[fg_mask_inboxes]
             all_a = all_a[fg_mask_inboxes]
@@ -1499,7 +1501,7 @@ class ComputeLossAuxOTA:
                 continue
             p_obj = torch.cat(p_obj, dim=0)
             p_cls = torch.cat(p_cls, dim=0)
-            from_which_layer = torch.cat(from_which_layer, dim=0)
+            from_which_layer = torch.cat(from_which_layer, dim=0).to(targets.device)
             all_b = torch.cat(all_b, dim=0)
             all_a = torch.cat(all_a, dim=0)
             all_gj = torch.cat(all_gj, dim=0)

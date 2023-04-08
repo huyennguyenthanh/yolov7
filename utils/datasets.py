@@ -11,7 +11,7 @@ from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from threading import Thread
-
+from scipy.ndimage import zoom
 import cv2
 import numpy as np
 import torch
@@ -406,7 +406,12 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         cache.pop('hash')  # remove hash
         cache.pop('version')  # remove version
         labels, shapes, self.segments = zip(*cache.values())
-        self.labels = list(labels)
+        labels = list(labels)
+        for i, l in enumerate(labels):
+            if labels[i].shape == (1,5):
+                labels[i][0][0] = np.float32(0)
+        self.labels = labels
+        # self.labels = list(labels)
         self.shapes = np.array(shapes, dtype=np.float64)
         self.img_files = list(cache.keys())  # update
         self.label_files = img2label_paths(cache.keys())  # update
@@ -533,9 +538,10 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
     def __getitem__(self, index):
         index = self.indices[index]  # linear, shuffled, or image_weights
-
+       
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
+        
         if mosaic:
             # Load mosaic
             if random.random() < 0.8:
@@ -564,11 +570,15 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
             labels = self.labels[index].copy()
-            if labels.size:  # normalized xywh to pixel xyxy format
+            if labels.size:  
+                # normalized xywh to pixel xyxy format
+                # xc, yc, w, h to x0, y0, x1, y1
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
-
+        
         if self.augment:
             # Augment imagespace
+            if random.random() < hyp['zoom_in']:
+                img, labels = scale_zoom_in(img, labels)
             if not mosaic:
                 img, labels = random_perspective(img, labels,
                                                  degrees=hyp['degrees'],
@@ -576,8 +586,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                                                  scale=hyp['scale'],
                                                  shear=hyp['shear'],
                                                  perspective=hyp['perspective'])
-            
-            
+
             #img, labels = self.albumentations(img, labels)
 
             # Augment colorspace
@@ -598,7 +607,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     if len(sample_labels) == 0:
                         break
                 labels = pastein(img, labels, sample_labels, sample_images, sample_masks)
-
+     
         nL = len(labels)  # number of labels
         if nL:
             labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh
@@ -625,6 +634,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
+
 
         return torch.from_numpy(img), labels_out, self.img_files[index], shapes
 
@@ -1081,8 +1091,11 @@ def random_perspective(img, targets=(), segments=(), degrees=10, translate=.1, s
                 new[i] = segment2box(xy, width, height)
 
         else:  # warp boxes
+         
             xy = np.ones((n * 4, 3))
+            
             xy[:, :2] = targets[:, [1, 2, 3, 4, 1, 4, 3, 2]].reshape(n * 4, 2)  # x1y1, x2y2, x1y2, x2y1
+            
             xy = xy @ M.T  # transform
             xy = (xy[:, :2] / xy[:, 2:3] if perspective else xy[:, :2]).reshape(n, 8)  # perspective rescale or affine
 
@@ -1101,6 +1114,52 @@ def random_perspective(img, targets=(), segments=(), degrees=10, translate=.1, s
         targets[:, 1:5] = new[i]
 
     return img, targets
+
+def random_zoom_in(img, labels):
+
+    # labels : x0, y0, x1, y1
+    zoom_factor = random.choice([1.3, 1.5, 2.0, 2.5])
+    zoom_factor = zoom_factor if 3 <= zoom_factor and zoom_factor < 4 else 2
+    h, w = img.shape[:2]
+  
+
+    # For multichannel images we don't want to apply the zoom factor to the RGB
+    # dimension, so instead we create a tuple of zoom factors, one per array
+    # dimension, with 1's for any trailing dimensions after the width and height.
+    zoom_tuple = (zoom_factor,) * 2 + (1,) * (img.ndim - 2)
+
+
+    # Bounding box of the zoomed-in region within the input array
+    zh = int(np.round(h / zoom_factor))
+    zw = int(np.round(w / zoom_factor))
+    top = random.randint(0, h - zh)
+    left = random.randint(0, w - zw)
+
+    
+
+    
+    for i, l in enumerate(labels):
+        if labels[i].shape == (5,):
+            labels[i][1] = max(0, labels[i][1] - np.float32(left))
+            labels[i][2] = max(0, labels[i][2] - np.float32(top))
+            labels[i][3] = min(left+zw, labels[i][3] - np.float32(left))
+            labels[i][4] = min(top+zh, labels[i][4] - np.float32(top))
+
+    # labels = [label for label in labels if abs(label[3] - label[1]) < 2 or abs(label[4] - label[2]) < 2]
+
+
+
+    # out = zoom(img[top:top+zh, left:left+zw], zoom_tuple)
+    out = img[top:top+zh, left:left+zw]
+
+    # `out` might still be slightly larger than `img` due to rounding, so
+    # trim off any extra pixels at the edges
+    trim_top = ((out.shape[0] - h) // 2)
+    trim_left = ((out.shape[1] - w) // 2)
+    out = out[trim_top:trim_top+h, trim_left:trim_left+w]
+
+    return out, labels
+ 
 
 
 def box_candidates(box1, box2, wh_thr=2, ar_thr=20, area_thr=0.1, eps=1e-16):  # box1(4,n), box2(4,n)
@@ -1318,3 +1377,84 @@ def load_segmentations(self, index):
     #print(key)
     # /work/handsomejw66/coco17/
     return self.segs[key]
+
+
+def bbox_area_1(bbox):
+    return abs(bbox[:, 2] - bbox[:, 0]) * abs(bbox[:,3] - bbox[:,1])
+def clip_box_1(bbox, clip_box, alpha):
+    """Clip the bounding boxes to the borders of an image
+    
+    Parameters
+    ----------
+    
+    bbox: numpy.ndarray
+        Numpy array containing bounding boxes of shape `N X 4` where N is the 
+        number of bounding boxes and the bounding boxes are represented in the
+        format `x1 y1 x2 y2`
+    
+    clip_box: numpy.ndarray
+        An array of shape (4,) specifying the diagonal co-ordinates of the image
+        The coordinates are represented in the format `x1 y1 x2 y2`
+        
+    alpha: float
+        If the fraction of a bounding box left in the image after being clipped is 
+        less than `alpha` the bounding box is dropped. 
+    
+    Returns
+    -------
+    
+    numpy.ndarray
+        Numpy array containing **clipped** bounding boxes of shape `N X 4` where N is the 
+        number of bounding boxes left are being clipped and the bounding boxes are represented in the
+        format `x1 y1 x2 y2` 
+    
+    """
+    ar_ = (bbox_area_1(bbox))
+    x_min = np.maximum(bbox[:,0], clip_box[0]).reshape(-1,1)
+    y_min = np.maximum(bbox[:,1], clip_box[1]).reshape(-1,1)
+    x_max = np.minimum(bbox[:,2], clip_box[2]).reshape(-1,1)
+    y_max = np.minimum(bbox[:,3], clip_box[3]).reshape(-1,1)
+    
+    bbox = np.hstack((x_min, y_min, x_max, y_max, bbox[:,4:]))
+    
+    delta_area = ((ar_ - bbox_area_1(bbox))/ar_)
+    
+    mask = (delta_area < (1 - alpha)).astype(int)
+    
+    # bbox = bbox[mask == 1,:]
+
+
+    return bbox
+
+def scale_zoom_in(img, labels):
+    bboxes = labels[:, 1:]
+    img_shape = img.shape
+    scale_x = random.uniform(0, 1)
+    scale_y = random.uniform(0, 1)
+   
+		
+
+    resize_scale_x = 1 + scale_x
+    resize_scale_y = 1 + scale_y
+
+    img=  cv2.resize(img, None, fx = resize_scale_x, fy = resize_scale_y)
+    
+    bboxes[:,:4] *= [resize_scale_x, resize_scale_y, resize_scale_x, resize_scale_y]
+
+
+
+    canvas = np.zeros(img_shape, dtype = np.uint8)
+
+    y_lim = int(min(resize_scale_y,1)*img_shape[0])
+    x_lim = int(min(resize_scale_x,1)*img_shape[1])
+
+
+    canvas[:y_lim,:x_lim,:] =  img[:y_lim,:x_lim,:]
+
+    img = canvas
+    bboxes = clip_box_1(bboxes, [0,0,1 + img_shape[1], img_shape[0]], 0.25)
+    labels =np.hstack((labels[:, :1], bboxes))
+   
+
+
+    return img, labels

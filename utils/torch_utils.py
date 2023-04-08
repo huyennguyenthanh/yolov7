@@ -63,14 +63,14 @@ def git_describe(path=Path(__file__).parent):  # path must be a directory
 def select_device(device='', batch_size=None):
     # device = 'cpu' or '0' or '0,1,2,3'
     s = f'YOLOR 🚀 {git_describe() or date_modified()} torch {torch.__version__} '  # string
-    cpu = device.lower() == 'cpu'
-    if cpu:
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # force torch.cuda.is_available() = False
-    elif device:  # non-cpu device requested
-        os.environ['CUDA_VISIBLE_DEVICES'] = device  # set environment variable
-        assert torch.cuda.is_available(), f'CUDA unavailable, invalid device {device} requested'  # check availability
+    # cpu = device.lower() == 'cpu'
+    # if cpu:
+    #     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # force torch.cuda.is_available() = False
+    # elif device:  # non-cpu device requested
+    #     os.environ['CUDA_VISIBLE_DEVICES'] = device  # set environment variable
+    #     assert torch.cuda.is_available(), f'CUDA unavailable, invalid device {device} requested'  # check availability
 
-    cuda = not cpu and torch.cuda.is_available()
+    cuda = torch.cuda.is_available()
     if cuda:
         n = torch.cuda.device_count()
         if n > 1 and batch_size:  # check that batch_size is compatible with device_count

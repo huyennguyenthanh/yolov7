@@ -190,7 +190,7 @@ if __name__ == '__main__':
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
             for opt.weights in ['yolov7.pt']:
-                detect()
+                detect(save_img=True)
                 strip_optimizer(opt.weights)
         else:
-            detect()
+            detect(save_img=True)
