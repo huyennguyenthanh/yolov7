@@ -24,7 +24,8 @@
 !cfg/yolov3*.cfg
 
 storage.googleapis.com
-runs/train/*
+runs/detect/*
+runs/test/*
 data/*
 data/images/*
 !data/*.yaml
