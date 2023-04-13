@@ -365,20 +365,31 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         #self.albumentations = Albumentations() if augment else None
 
         try:
-            f = []  # image files
-            for p in path if isinstance(path, list) else [path]:
-                p = Path(p)  # os-agnostic
-                if p.is_dir():  # dir
-                    f += glob.glob(str(p / '**' / '*.*'), recursive=True)
-                    # f = list(p.rglob('**/*.*'))  # pathlib
-                elif p.is_file():  # file
-                    with open(p, 'r') as t:
-                        t = t.read().strip().splitlines()
-                        parent = str(p.parent) + os.sep
-                        f += [x.replace('./', parent) if x.startswith('./') else x for x in t]  # local to global path
-                        # f += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
-                else:
-                    raise Exception(f'{prefix}{p} does not exist')
+            
+            if (path[0].endswith("json") and isinstance(path, list)) or (path.endswith("json") and not isinstance(path, list)):
+                path = path[0] if isinstance(path, list) else path
+
+                from pycocotools.coco import COCO
+                coco = COCO(path)
+                image_ids = coco.getImgIds()
+                f = [coco.loadImgs(image_id)[0]['file_name'] for image_id in image_ids]
+                p = Path(path)
+            else:
+                f = []  # image files
+                for p in path if isinstance(path, list) else [path]:
+                    p = Path(p)  # os-agnostic
+                    if p.is_dir():  # dir
+                        f += glob.glob(str(p / '**' / '*.*'), recursive=True)
+                        # f = list(p.rglob('**/*.*'))  # pathlib
+                    elif p.is_file():  # file
+                        with open(p, 'r') as t:
+                            t = t.read().strip().splitlines()
+                            parent = str(p.parent) + os.sep
+                            f += [x.replace('./', parent) if x.startswith('./') else x for x in t]  # local to global path
+                            # f += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
+                    else:
+                        raise Exception(f'{prefix}{p} does not exist')
+            
             self.img_files = sorted([x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in img_formats])
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in img_formats])  # pathlib
             assert self.img_files, f'{prefix}No images found'
@@ -388,6 +399,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         # Check cache
         self.label_files = img2label_paths(self.img_files)  # labels
         cache_path = (p if p.is_file() else Path(self.label_files[0]).parent).with_suffix('.cache')  # cached labels
+        print(self.label_files[0])
+        print(p)
+        print(cache_path)
         if cache_path.is_file():
             cache, exists = torch.load(cache_path), True  # load
             #if cache['hash'] != get_hash(self.label_files + self.img_files) or 'version' not in cache:  # changed
