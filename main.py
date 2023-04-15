@@ -78,11 +78,14 @@ def main(opt):
     set_logging(opt.global_rank)
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    
+  
+    print(opt)
+    print(opt.cfg)
+    print(opt.hyp)
     if opt.semi:
         trainer = SemiTrainer(opt, device, LOCAL_RANK, RANK, WORLD_SIZE)
     else:
-        trainer = Trainer(opt, device, LOCAL_RANK, RANK, WORLD_SIZE)
+        trainer = Trainer(opt, device)
         
     trainer.train()
     if WORLD_SIZE > 1 and RANK == 0:
