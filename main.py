@@ -82,12 +82,13 @@ def main(opt):
     print(opt)
     print(opt.cfg)
     print(opt.hyp)
+
     if opt.semi:
-        trainer = SemiTrainer(opt, device, LOCAL_RANK, RANK, WORLD_SIZE)
+        trainer = SemiTrainer(opt, device)
     else:
         trainer = Trainer(opt, device)
         
-    trainer.train()
+    # trainesr.train()
     if WORLD_SIZE > 1 and RANK == 0:
         LOGGER.info('Destroying process group... ')
         # dist.destroy_process_group()
