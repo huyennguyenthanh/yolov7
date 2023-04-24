@@ -263,6 +263,7 @@ crashlytics-build.properties
 fabric.properties
 
 YOLOv7/
+YOLOv7_test_semi/
 train.sh
 notebook/
 workspace/

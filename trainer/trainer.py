@@ -256,7 +256,7 @@ class Trainer:
     def load_optimizer(self):
         # optimizer parameter groups
         pg0, pg1, pg2 = [], [], []
-        for k, v in self.student_model.named_modules():
+        for k, v in self.model.named_modules():
             if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
                 pg2.append(v.bias)  # biases
             if isinstance(v, nn.BatchNorm2d):
@@ -463,6 +463,9 @@ class Trainer:
             imgs = (
                 imgs.to(self.device, non_blocking=True).float() / 255.0
             )  # uint8 to float32, 0-255 to 0.0-1.0
+            # Plot
+            self.plot_image(i, epoch, imgs, targets, paths)
+            
             # Warm up --------------------------------
             if ni <= self.num_warm_up_iters:
                 self.warm_up(epoch, ni)
@@ -501,10 +504,26 @@ class Trainer:
                 )
 
     def train_on_batch(self, ni, model, imgs, targets):
+        """_summary_
+
+        Args:
+            ni (_type_): _description_
+            model (_type_): 
+            imgs (Tensor): torch.Size([batch_size, 3, 640, 640])
+            targets (Tensor): torch.Size([4, 6]) (image_index, label, bbox)
+
+        Returns:
+            pred: list of 3 Detect Head: torch.Size([batch_size, 3, 80, 80, 6])
+            loss: torch.Size([1])
+            loss_items: loss for each input in batch: torch.Size([batch_size])
+        """
 
         # Forward
         with amp.autocast(enabled=self.device != "cpu"):
+
             pred = model(imgs)  # forward
+
+            import pdb; pdb.set_trace()
             if "loss_ota" not in self.hyp or self.hyp["loss_ota"] == 1:
                 loss, loss_items = self.compute_loss_ota(
                     pred, targets.to(self.device), imgs
@@ -529,6 +548,17 @@ class Trainer:
                 self.ema.update(model)
         return loss_items
 
+    def plot_image(self, i, epoch, imgs, targets, paths=None):
+
+        # Plot
+        if i < 5 and epoch < 3:
+            f = (
+                self.save_dict["save_dir"] / f"train_epoch_{epoch}_batch_{i}.jpg"
+            )  # filename
+            Thread(
+                target=plot_images, args=(imgs, targets, paths, f), daemon=True
+            ).start()
+
     def plot_on_batch(
         self, epoch, i, mean_losses, loss_items, pbar, imgs, targets, paths
     ):
@@ -546,16 +576,7 @@ class Trainer:
             )
             pbar.set_description(s)
 
-            # Plot
-            if i < 5 and epoch % 5 == 0:
-                f = (
-                    self.save_dict["save_dir"] / f"train_epoch_{epoch}_batch_{i}.jpg"
-                )  # filename
-                Thread(
-                    target=plot_images, args=(imgs, targets, paths, f), daemon=True
-                ).start()
-
-            elif i == 10 and self.wandb_logger.wandb:
+            if i == 10 and self.wandb_logger.wandb:
                 self.wandb_logger.log(
                     {
                         "Mosaics": [

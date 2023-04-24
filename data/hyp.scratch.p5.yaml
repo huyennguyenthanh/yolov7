@@ -24,8 +24,23 @@ shear: 0.0  # image shear (+/- deg)
 perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
 flipud: 0.0  # image flip up-down (probability)
 fliplr: 0.5  # image flip left-right (probability)
-mosaic: 1.0  # image mosaic (probability)
+mosaic: 0.7  # image mosaic (probability)
 mixup: 0.15  # image mixup (probability)
 copy_paste: 0.0  # image copy paste (probability)
 paste_in: 0.15  # image copy paste (probability), use 0 for faster training
 loss_ota: 1 # use ComputeLossOTA, use 0 for faster training
+
+
+#semi training
+semi_reg_loss_weight: 0.
+mix_label_num: 0
+semi_loss_weight: 4.0
+bbox_threshold: 0.4
+cls_threshold: 0.5
+burn_up_step: 30
+teacher_update_iter: 1
+ema_keep_rate: 0.9996
+fl_gamma_semi: 1.5
+mls_filter_threshold: 0.2
+mls_threshold: 0.4
+nc: 1  # number of classes

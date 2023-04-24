@@ -20,7 +20,9 @@ from torch.cuda import amp
 import yaml
 from models.yolo import Model
 from trainer.trainer import Trainer
-from utils.datasets import create_dataloader
+from utils.datasets_semi import create_dataloader_semi
+
+# from utils.datasets import create_dataloader
 import test
 from utils.general import (
     check_dataset,
@@ -121,7 +123,7 @@ class SemiTrainer(Trainer):
 
         # Load Models
         self.teacher_model = self.load_model()
-        self.student_model = self.load_model()
+        self.model = self.load_model() # student_model
         self.optimizer = self.load_optimizer()
         (
             self.scheduler,
@@ -138,12 +140,12 @@ class SemiTrainer(Trainer):
             self.labeled_dataset,
             self.labeled_dataloader,
             self.labeled_num_batches,
-        ) = self.load_dataset(type="train")
+        ) = self.load_dataset(type="train", augment=False, mosaic=True)
         (
             self.unlabeled_dataset,
             self.unlabeled_dataloader,
             self.unlabeled_num_batches,
-        ) = self.load_dataset(type="unlabel")
+        ) = self.load_dataset(type="unlabel", augment=True, mosaic=True)
         (
             self.val_dataset,
             self.val_dataloader,
@@ -151,7 +153,7 @@ class SemiTrainer(Trainer):
         ) = self.load_val_dataset()
         self.num_batches = max(self.labeled_num_batches, self.unlabeled_num_batches)
         # EMA
-        self.ema = ModelEMA(self.student_model) if self.rank in [-1, 0] else None
+        self.ema = ModelEMA(self.model) if self.rank in [-1, 0] else None
 
         # Model parameters
         self.hyp["box"] *= 3.0 / self.num_layers  # scale to layers
@@ -162,31 +164,33 @@ class SemiTrainer(Trainer):
             (self.imgsz / 640) ** 2 * 3.0 / self.num_layers
         )  # scale to image size and layers
         self.hyp["label_smoothing"] = opt.label_smoothing
-        self.student_model.nc = self.nc  # attach number of classes to model
-        self.student_model.hyp = self.hyp  # attach hyperparameters to model
-        self.student_model.class_weights = (
+        self.model.nc = self.nc  # attach number of classes to model
+        self.model.hyp = self.hyp  # attach hyperparameters to model
+        self.model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
+
+        self.model.class_weights = (
             labels_to_class_weights(self.labeled_dataset.labels, self.nc).to(device)
             * self.nc
         )  # attach class weights
-        self.student_model.names = self.names
+        self.model.names = self.names
 
         self.time_dict = {}
 
-    def load_dataset(self, type="train"):
+    def load_dataset(self, type="train",augment=False, mosaic=False):
         opt = self.opt
         with torch_distributed_zero_first(self.rank):
             check_dataset(self.data_dict)  # check
-        path = self.data_dict["train"]
+        path = self.data_dict[type]
 
         # Trainloader
-        dataloader, dataset = create_dataloader(
+        dataloader, dataset = create_dataloader_semi(
             path,
             self.imgsz,
             opt.batch_size,
             self.gs,
             opt,
             hyp=self.hyp,
-            augment=True,
+            augment=augment,
             cache=opt.cache_images,
             rect=opt.rect,
             rank=self.rank,
@@ -195,6 +199,7 @@ class SemiTrainer(Trainer):
             image_weights=opt.image_weights,
             quad=opt.quad,
             prefix=colorstr("train: "),
+            mosaic=mosaic
         )
         mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
         nb = len(dataloader)  # number of batches
@@ -211,13 +216,15 @@ class SemiTrainer(Trainer):
     def load_val_dataset(self):
         opt = self.opt
         if self.rank in [-1, 0]:
-            dataset, dataloader = create_dataloader(
+            dataset, dataloader = create_dataloader_semi(
                 self.data_dict["val"],
                 self.imgsz_test,
                 opt.batch_size * 2,
                 self.gs,
                 opt,  # testloader
                 hyp=self.hyp,
+                augment=False,
+                mosaic=False,
                 cache=opt.cache_images and not opt.notest,
                 rect=True,
                 rank=-1,
@@ -242,20 +249,17 @@ class SemiTrainer(Trainer):
         start_epoch, self.best_fitness = 0, 0.0
         self.scheduler.last_epoch = start_epoch - 1
         self.scaler = amp.GradScaler(enabled=self.device)
-
-        self.compute_loss_semi = ComputeLossOTA(self.student_model)  # init loss class
-        self.compute_loss = ComputeLoss(self.student_model)  # init loss class
-
+        self.compute_loss = ComputeLossOTA(self.model)  # init loss class
+  
         for epoch in range(start_epoch, self.opt.epochs):
             self.train_on_epoch(epoch)
         self.end_training()
 
     def train_on_epoch(self, epoch):
-        self.student_model.train()
+        self.model.train()
         mean_loss = torch.zeros(4, device=self.device)  # mean losses
         mean_loss_semi = torch.zeros(3, device=self.device)  # mean losses
-        semi_loss_items = torch.zeros(3, device=self.device)
-        semi_label = torch.zeros(1, device=self.device)
+    
 
         if self.rank != -1:
             self.labeled_dataloader.sampler.set_epoch(epoch)
@@ -267,20 +271,21 @@ class SemiTrainer(Trainer):
                 max(len(self.labeled_dataloader), len(self.inlabeled_dataloader))
             )
         pbar = enumerate(zip(self.labeled_dataloader, self.unlabeled_dataloader))
+    
+
         logger.info(
-            ("\n" + "%10s" * 11)
+            ("\n" + "%10s" * 10)
             % (
                 "Epoch",
                 "gpu_mem",
                 "box",
                 "obj",
                 "cls",
-                "mls",
+                "reg",
                 "semi_obj",
                 "semi_cls",
-                "semi_mls",
+                "semi_reg",
                 "labels",
-                "semi_labels",
             )
         )
         pbar = tqdm(pbar, total=self.num_batches)  # progress bar
@@ -289,30 +294,33 @@ class SemiTrainer(Trainer):
         for i, data in pbar:
 
             ni = i + self.num_batches * epoch  # num iteration
-            imgs = (
-                imgs.to(self.device, non_blocking=True).float() / 255.0
-            )  # uint8 to float32, 0-255 to 0.0-1.0
+         
             # Warm up --------------------------------
             if ni <= self.num_warm_up_iters:
                 self.warm_up(epoch, ni)
 
-            self.train_on_batch(ni, data)
+            mean_loss, mean_loss_semi = self.train_on_batch(i, ni, data)
+            continue
+            self.plot_on_batch(pbar, i, ni, epoch, mean_loss, mean_loss_semi)
+            if i == len(pbar) - 1:
+                break
+        exit()
+        lr = [x["lr"] for x in self.optimizer.param_groups]  # for loggers
+        self.scheduler.step()
+        self.end_epoch(epoch)
 
-    def train_on_batch(self, ni, data):
-        semi_label_items = torch.zeros(1, device=self.device)
-        (label_imgs, label_targets, label_class_one_hot, _, _), (
+    def train_on_batch(self, i, ni, data):
+        (label_imgs, label_targets, label_class_one_hot), (
             unlabel_imgs,
             unlabel_targets,
             unlabel_class_one_hot,
-            _,
-            _,
         ) = data
 
         label_imgs_weak_aug, label_imgs_strong_aug = label_imgs
         unlabel_imgs_weak_aug, unlabel_imgs_strong_aug = unlabel_imgs
         label_imgs_weak_aug = label_imgs_weak_aug.to(
             self.device, non_blocking=True
-        ).float()
+        ).float() 
         label_imgs_strong_aug = label_imgs_strong_aug.to(
             self.device, non_blocking=True
         ).float()
@@ -337,12 +345,13 @@ class SemiTrainer(Trainer):
         label_targets_strong[:, 0] += label_targets[-1, 0] + 1
         label_targets = torch.cat([label_targets, label_targets_strong], 0)
 
-
         semi_loss = 0.0
+        semi_loss_items = torch.zeros(self.opt.batch_size)
         if ni < self.hyp["burn_up_step"]:
-            loss = self.train_on_batch_supervised(
+            loss, loss_items = self.train_on_batch_supervised(
                 ni, label_imgs, label_targets, label_class_one_hot
             )
+
         else:
             self.update_ema(ni)
             (
@@ -350,7 +359,7 @@ class SemiTrainer(Trainer):
                 unlabel_targets_merge_cls,
                 unlabel_targets_merge_reg,
             ) = self.predict_pseudo_label(unlabel_imgs_weak_aug)
-            loss, semi_loss, semi_loss_items = self.train_on_batch_semi(
+            loss, loss_items, semi_loss, semi_loss_items = self.train_on_batch_semi(
                 label_imgs,
                 label_targets,
                 unlabel_imgs_strong_aug,
@@ -362,6 +371,8 @@ class SemiTrainer(Trainer):
 
         loss = loss + semi_loss * self.hyp["semi_loss_weight"]
         semi_loss_items *= self.hyp["semi_loss_weight"]
+        mean_loss = (mean_loss * i + loss_items) / (i + 1)
+        mean_loss_semi = (mean_loss_semi * i + semi_loss_items) / (i + 1)
         # Backward
         self.scaler.scale(loss).backward()
 
@@ -371,40 +382,36 @@ class SemiTrainer(Trainer):
             self.scaler.update()
             self.optimizer.zero_grad()
             if self.ema is not None:
-                self.ema.update(self.student_model )
+                self.ema.update(self.model)
             last_opt_step = ni
 
-        self.plot_on_batch()
+        return mean_loss, mean_loss_semi
 
     def train_on_batch_supervised(
         self, ni, label_imgs, label_targets, label_class_one_hot
     ):
-
-        
-        if ni < self.hyp["burn_up_step"]:
-            # Forward
-            with amp.autocast(enabled=self.device):
-                pred, pred_mls = self.student_model(label_imgs)  # forward
-                loss, loss_items = self.compute_loss(
-                    pred,
-                    label_targets.to(self.device),
-                    pred_mls,
-                    label_class_one_hot.to(self.device),
-                )  # loss scaled by batch_size
-                if self.opt.quad:
-                    loss *= 4.0
-        return loss
+       
+        with amp.autocast(enabled=self.device != "cpu"):
+            pred = self.model(label_imgs)  # forward
+            loss, loss_items = self.compute_loss(
+                pred,
+                label_targets.to(self.device),
+                label_imgs
+            )  # loss scaled by batch_size
+            if self.opt.quad:
+                loss *= 4.0
+        return loss, loss_items
 
     def update_ema(self, ni):
         if ni == self.hyp["burn_up_step"]:
             _update_teacher_model(
-                self.student_model if self.ema is None else self.ema.ema,
+                self.model if self.ema is None else self.ema.ema,
                 self.teacher_model,
                 keep_rate=0.0,
             )
         elif (ni - self.hyp["burn_up_step"]) % self.hyp["teacher_update_iter"] == 0:
-            self._update_teacher_model(
-                self.student_model if self.ema is None else self.ema.ema,
+            _update_teacher_model(
+                self.model if self.ema is None else self.ema.ema,
                 self.teacher_model,
                 keep_rate=self.hyp["ema_keep_rate"],
             )
@@ -487,7 +494,6 @@ class SemiTrainer(Trainer):
             unlabel_targets_merge_reg = torch.cat(
                 [unlabel_targets_merge_reg, unlabel_target_reg]
             )
-            semi_label_items += n_box
         return (
             unlabel_class_one_hot,
             unlabel_targets_merge_cls,
@@ -506,8 +512,8 @@ class SemiTrainer(Trainer):
     ):
         Bl = label_imgs.size()[0]
         label_unlabel_imgs = torch.cat([label_imgs, unlabel_imgs_strong_aug])
-        with amp.autocast(enabled=self.device):
-            pred, pred_mls = self.student_model(label_unlabel_imgs)  # forward
+        with amp.autocast(enabled=self.device != "cpu"):
+            pred, pred_mls = self.model(label_unlabel_imgs)  # forward
             sup_pred = [p[:Bl] for p in pred]
             semi_pred = [p[Bl:] for p in pred]
             sup_pred_mls, semi_pred_mls = pred_mls[:Bl], pred_mls[Bl:]
@@ -539,18 +545,72 @@ class SemiTrainer(Trainer):
             if self.opt.quad:
                 semi_loss *= 4.0
                 loss *= 4
-        return loss, semi_loss, semi_loss_items
+        return loss, loss_items, semi_loss, semi_loss_items
 
+    def plot_on_batch(self, pbar, i, ni, epoch, mean_loss, mean_loss_semi):
 
-    def plot_on_batch(self):
-        # Log
-        if self.rank in [-1, 0]:
-            mean_loss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-            mloss_semi = (mloss_semi * i + semi_loss_items) / (i + 1)  # update mean losses
-            mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-            pbar.set_description(('%10s' * 2 + '%10.4g' * 9) % (
-                f'{epoch}/{epochs - 1}', mem, *mloss, *mloss_semi,label_targets.shape[0], semi_label_items))
-            callbacks.run('on_train_batch_end', ni, model, label_imgs, label_targets, label_paths, plots, opt.sync_bn)
-        # end batch ------------------------------------------------------------------------------------------------
-        if RANK in [-1, 0] and i==len(pbar)-1:
-            return
+        mem = f"{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G"  # (GB)
+        pbar.set_description(
+            ("%10s" * 2 + "%10.4g" * 7)
+            % (f"{epoch}/{self.opt.epochs - 1}", mem, *mean_loss, *mean_loss_semi)
+        )
+
+    def end_epoch(self, epoch):
+
+        if epoch % self.opt.val_per_epoch == 0 and epoch > 0:
+
+            if self.ema is not None:
+                self.ema.update_attr(
+                    self.model,
+                    include=["yaml", "nc", "hyp", "names", "stride", "class_weights"],
+                )
+
+            final_epoch = epoch + 1 == self.opt.epochs
+            if not self.opt.notest or final_epoch:  # Calculate mAP
+                results, maps, times = test.test(
+                    self.data_dict,
+                    batch_size=self.opt.batch_size * 2,
+                    imgsz=self.imgsz_test,
+                    model=deepcopy(self.teacher_model),
+                    single_cls=self.opt.single_cls,
+                    dataloader=self.val_dataloader,
+                    save_dir=self.save_dict["save_dir"],
+                    verbose=self.nc < 50 and final_epoch,
+                    plots=final_epoch,
+                    wandb_logger=self.wandb_logger,
+                    compute_loss=self.compute_loss,
+                    is_coco=False,
+                    v5_metric=self.opt.v5_metric,
+                )
+
+            # Update best mAP
+            fi = fitness(
+                np.array(results).reshape(1, -1)
+            )  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+            if fi > best_fitness:
+                best_fitness = fi
+
+            # Save model
+            if (not self.opt.nosave) or (
+                final_epoch and not self.opt.evolve
+            ):  # if save
+                ckpt = {
+                    "epoch": epoch,
+                    "best_fitness": best_fitness,
+                    "model_student": deepcopy(self.model).half(),
+                    "model": deepcopy(self.teacher_model).half(),
+                    "ema": deepcopy(self.ema.ema).half()
+                    if self.ema is not None
+                    else None,
+                    "updates": self.ema.updates if self.ema is not None else None,
+                    "optimizer": self.optimizer.state_dict(),
+                    "wandb_id": self.loggers.wandb.wandb_run.id
+                    if self.loggers.wandb
+                    else None,
+                }
+
+                # Save last, best and delete
+                torch.save(ckpt, self.save_dict["last"])
+                if best_fitness == fi:
+                    torch.save(ckpt, self.save_dict["best"])
+                del ckpt
