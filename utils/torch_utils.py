@@ -44,6 +44,7 @@ def _update_teacher_model(student, teacher, word_size=1, keep_rate=0.996):
             raise Exception("{} is not found in student model".format(key))
 
     teacher.load_state_dict(new_teacher_dict)
+    return teacher
 
 
 @contextmanager

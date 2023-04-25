@@ -38,7 +38,8 @@ def create_dataloader_semi(
     image_weights=False,
     quad=False,
     prefix="",
-    mosaic=False
+    mosaic=False,
+    num_images=10000000,
 ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     with torch_distributed_zero_first(rank):
@@ -55,7 +56,8 @@ def create_dataloader_semi(
             pad=pad,
             image_weights=image_weights,
             prefix=prefix,
-            mosaic=mosaic
+            mosaic=mosaic,
+            num_images=num_images,
         )
 
     batch_size = min(batch_size, len(dataset))
@@ -66,6 +68,7 @@ def create_dataloader_semi(
         torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
     )
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
+
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
     dataloader = loader(
         dataset,
@@ -73,6 +76,7 @@ def create_dataloader_semi(
         num_workers=nw,
         sampler=sampler,
         pin_memory=True,
+        shuffle=True,
         collate_fn=LoadImagesAndLabelsSemi.collate_fn4
         if quad
         else LoadImagesAndLabelsSemi.collate_fn,
@@ -165,6 +169,7 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
         stride=32,
         pad=0,
         prefix="",
+        num_images=10000000,
     ):
         super().__init__(
             path,
@@ -179,6 +184,7 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
             stride,
             pad,
             prefix,
+            num_images,
         )
         self.strong_augmentation = build_strong_augmentation()
         self.mosaic = mosaic
@@ -328,7 +334,7 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
         return (
             (torch.stack(img_w, 0), torch.stack(img_s, 0)),
             torch.cat(label, 0),
-            torch.cat(label_class_one_hot, 0)
+            torch.cat(label_class_one_hot, 0),
         )
 
     @staticmethod

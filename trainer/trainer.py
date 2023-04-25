@@ -416,7 +416,7 @@ class Trainer:
 
     def train(self):
         # Start training
-        model = self.model
+    
         self.num_warm_up_iters = max(
             round(self.hyp["warmup_epochs"] * self.num_batches), 1000
         )  # number of warmup iterations, max(3 epochs, 1k iterations)
@@ -427,15 +427,15 @@ class Trainer:
         start_epoch, self.best_fitness = 0, 0.0
         self.scheduler.last_epoch = start_epoch - 1  # do not move
         self.scaler = amp.GradScaler(enabled=self.device)
-        self.compute_loss_ota = ComputeLossOTA(model)  # init loss class
-        self.compute_loss = ComputeLoss(model)  # init loss class
-        torch.save(model, self.save_dict["wdir"] / "init.pt")
+        self.compute_loss_ota = ComputeLossOTA(self.model)  # init loss class
+        self.compute_loss = ComputeLoss(self.model)  # init loss class
+        torch.save(self.model, self.save_dict["wdir"] / "init.pt")
 
         for epoch in range(start_epoch, self.opt.epochs):
-            self.train_on_epoch(epoch, model)
+            self.train_on_epoch(epoch)
         self.end_training()
 
-    def train_on_epoch(self, epoch, model):
+    def train_on_epoch(self, epoch):
         """train 1 epochs
 
         Args:
@@ -444,7 +444,7 @@ class Trainer:
             compute_loss_ota (_type_): _description_
             compute_loss (_type_): _description_
         """
-        model.train()
+        self.model.train()
 
         if self.rank != -1:
             self.dataloader.sampler.set_epoch(epoch)
@@ -464,17 +464,22 @@ class Trainer:
                 imgs.to(self.device, non_blocking=True).float() / 255.0
             )  # uint8 to float32, 0-255 to 0.0-1.0
             # Plot
-            self.plot_image(i, epoch, imgs, targets, paths)
-            
+            self.plot_image_on_batch(i, epoch, imgs, targets, paths)
+
             # Warm up --------------------------------
             if ni <= self.num_warm_up_iters:
                 self.warm_up(epoch, ni)
 
             # Train on batch -----------------------------
-            loss_items = self.train_on_batch(ni, model, imgs, targets)
+            loss_items = self.train_on_batch(ni,imgs, targets)
             mean_losses = (mean_losses * i + loss_items) / (i + 1)  # update mean losses
             self.plot_on_batch(
-                epoch, i, mean_losses, loss_items, pbar, imgs, targets, paths
+                epoch,
+                i,
+                mean_losses,
+                pbar,
+                imgs,
+                targets,
             )
 
         self.end_epoch(epoch, mean_losses)
@@ -503,12 +508,12 @@ class Trainer:
                     ni, xi, [self.hyp["warmup_momentum"], self.hyp["momentum"]]
                 )
 
-    def train_on_batch(self, ni, model, imgs, targets):
+    def train_on_batch(self, ni,  imgs, targets):
         """_summary_
 
         Args:
             ni (_type_): _description_
-            model (_type_): 
+            model (_type_):
             imgs (Tensor): torch.Size([batch_size, 3, 640, 640])
             targets (Tensor): torch.Size([4, 6]) (image_index, label, bbox)
 
@@ -521,9 +526,8 @@ class Trainer:
         # Forward
         with amp.autocast(enabled=self.device != "cpu"):
 
-            pred = model(imgs)  # forward
+            pred = self.model(imgs)  # forward
 
-            import pdb; pdb.set_trace()
             if "loss_ota" not in self.hyp or self.hyp["loss_ota"] == 1:
                 loss, loss_items = self.compute_loss_ota(
                     pred, targets.to(self.device), imgs
@@ -545,10 +549,10 @@ class Trainer:
             self.scaler.update()
             self.optimizer.zero_grad()
             if self.ema:
-                self.ema.update(model)
+                self.ema.update(self.model)
         return loss_items
 
-    def plot_image(self, i, epoch, imgs, targets, paths=None):
+    def plot_image_on_batch(self, i, epoch, imgs, targets, paths=None):
 
         # Plot
         if i < 5 and epoch < 3:
@@ -560,7 +564,13 @@ class Trainer:
             ).start()
 
     def plot_on_batch(
-        self, epoch, i, mean_losses, loss_items, pbar, imgs, targets, paths
+        self,
+        epoch,
+        i,
+        mean_losses,
+        pbar,
+        imgs,
+        targets,
     ):
         # Print
         if self.rank in [-1, 0]:
@@ -630,7 +640,7 @@ class Trainer:
             if len(self.opt.name) and self.opt.bucket:
                 os.system(
                     "gsutil cp %s gs://%s/results/results%s.txt"
-                    % (self.save_dict["results_file"], opt.bucket, opt.name)
+                    % (self.save_dict["results_file"], self.opt.bucket, self.opt.name)
                 )
 
             # Log

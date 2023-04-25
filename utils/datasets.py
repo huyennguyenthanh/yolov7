@@ -108,6 +108,7 @@ def create_dataloader(
     image_weights=False,
     quad=False,
     prefix="",
+    num_images=100000000,
 ):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     with torch_distributed_zero_first(rank):
@@ -124,6 +125,7 @@ def create_dataloader(
             pad=pad,
             image_weights=image_weights,
             prefix=prefix,
+            num_images=num_images,
         )
 
     batch_size = min(batch_size, len(dataset))
@@ -148,9 +150,25 @@ def create_dataloader(
     return dataloader, dataset
 
 
+# class InfiniteDataLoader(torch.utils.data.dataloader.DataLoader):
+#     """Dataloader that reuses workers
+
+#     Uses same syntax as vanilla DataLoader
+#     """
+
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         object.__setattr__(self, "batch_sampler", _RepeatSampler(self.batch_sampler))
+#         self.iterator = super().__iter__()
+
+#     def __len__(self):
+#         return len(self.batch_sampler.sampler)
+
+#     def __iter__(self):
+#         for i in range(len(self)):
+#             yield next(self.iterator)
 class InfiniteDataLoader(torch.utils.data.dataloader.DataLoader):
     """Dataloader that reuses workers
-
     Uses same syntax as vanilla DataLoader
     """
 
@@ -158,13 +176,24 @@ class InfiniteDataLoader(torch.utils.data.dataloader.DataLoader):
         super().__init__(*args, **kwargs)
         object.__setattr__(self, "batch_sampler", _RepeatSampler(self.batch_sampler))
         self.iterator = super().__iter__()
+        self.length = None
 
     def __len__(self):
-        return len(self.batch_sampler.sampler)
+        return (
+            len(self.batch_sampler.sampler)
+            if self.length is None
+            else max(len(self.batch_sampler.sampler), self.length)
+        )
 
     def __iter__(self):
-        for i in range(len(self)):
+        for i in range(
+            len(self) if self.length is None else max(len(self), self.length)
+        ):
+            # while True:
             yield next(self.iterator)
+
+    def set_length(self, length):
+        self.length = length
 
 
 class _RepeatSampler(object):
@@ -450,6 +479,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         stride=32,
         pad=0.0,
         prefix="",
+        num_images=1000000,
     ):
         self.img_size = img_size
         self.augment = augment
@@ -474,7 +504,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
 
                 coco = COCO(path)
                 image_ids = coco.getImgIds()
-                f = [coco.loadImgs(image_id)[0]["file_name"] for image_id in image_ids]
+                f = [coco.loadImgs(image_id)[0]["file_name"] for image_id in image_ids][
+                    : min(len(image_ids), num_images)
+                ]
                 p = Path(path)
             else:
                 f = []  # image files
@@ -494,7 +526,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                             # f += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
                     else:
                         raise Exception(f"{prefix}{p} does not exist")
-
+                print(len(f))
+                # f = f[:num_images]
+                # print(len(f))
             self.img_files = sorted(
                 [
                     x.replace("/", os.sep)
@@ -502,6 +536,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     if x.split(".")[-1].lower() in img_formats
                 ]
             )
+            self.img_files = self.img_files[:num_images]
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in img_formats])  # pathlib
             assert self.img_files, f"{prefix}No images found"
         except Exception as e:

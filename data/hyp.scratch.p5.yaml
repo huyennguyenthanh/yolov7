@@ -2,7 +2,7 @@ lr0: 0.01  # initial learning rate (SGD=1E-2, Adam=1E-3)
 lrf: 0.1  # final OneCycleLR learning rate (lr0 * lrf)
 momentum: 0.937  # SGD momentum/Adam beta1
 weight_decay: 0.0005  # optimizer weight decay 5e-4
-warmup_epochs: 3.0  # warmup epochs (fractions ok)
+warmup_epochs: 10.0  # warmup epochs (fractions ok)
 warmup_momentum: 0.8  # warmup initial momentum
 warmup_bias_lr: 0.1  # warmup initial bias lr
 box: 0.05  # box loss gain
@@ -37,10 +37,14 @@ mix_label_num: 0
 semi_loss_weight: 4.0
 bbox_threshold: 0.4
 cls_threshold: 0.5
-burn_up_step: 30
+burn_up_step: 500
+burn_up_epoch: 10
 teacher_update_iter: 1
 ema_keep_rate: 0.9996
 fl_gamma_semi: 1.5
 mls_filter_threshold: 0.2
 mls_threshold: 0.4
 nc: 1  # number of classes
+
+
+val_per_epoch: 1

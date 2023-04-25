@@ -18,7 +18,7 @@ import torch.utils.data
 import yaml
 from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import test  # import test.py to get mAP after each epoch
@@ -45,7 +45,9 @@ from utils.general import (
     colorstr,
 )
 from utils.google_utils import attempt_download
-from utils.loss import ComputeLoss, ComputeLossOTA
+from utils.loss.compute_loss import ComputeLoss
+from utils.loss.compute_loss_ota import ComputeLossOTA
+# from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import (
     ModelEMA,
@@ -474,14 +476,13 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
+        # batch -------------------------------------------------------------
         for i, (
             imgs,
             targets,
             paths,
             _,
-        ) in (
-            pbar
-        ):  # batch -------------------------------------------------------------
+        ) in pbar:
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = (
                 imgs.to(device, non_blocking=True).float() / 255.0
@@ -962,13 +963,13 @@ if __name__ == "__main__":
     logger.info(opt)
     if not opt.evolve:
         tb_writer = None  # init loggers
-        if opt.global_rank in [-1, 0]:
-            prefix = colorstr("tensorboard: ")
-            logger.info(
-                f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/"
-            )
-            tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
-        train(hyp, opt, device, tb_writer)
+        # if opt.global_rank in [-1, 0]:
+        #     prefix = colorstr("tensorboard: ")
+        #     logger.info(
+        #         f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/"
+        #     )
+        #     tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
+        train(hyp, opt, device)
 
     # Evolve hyperparameters (optional)
     else:

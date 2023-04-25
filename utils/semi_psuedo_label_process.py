@@ -329,4 +329,4 @@ def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
     y[:, 1] = ((x[:, 1] + x[:, 3]) / 2) / h  # y center
     y[:, 2] = (x[:, 2] - x[:, 0]) / w  # width
     y[:, 3] = (x[:, 3] - x[:, 1]) / h  # height
-    return
+    return y
