@@ -265,3 +265,4 @@ fabric.properties
 train.sh
 YOLOv7/
 workspace/
+YOLOv7_test_semi/

@@ -4,7 +4,8 @@
 # download: bash ./scripts/get_coco.sh
 
 # train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
-train: /mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/train2019 # 118287 images
+train: /mnt/disk1/nguyen.thanh.huyenb/PolypsSet/Semi_PolypsSet/semi_1_labels_fold_1_percent_10/train2019.1@10.json  
+ # 118287 images
 val: /mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid # 5000 images
 test: /mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB
 
