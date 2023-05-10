@@ -30,3 +30,23 @@ copy_paste: 0.0  # image copy paste (probability)
 paste_in: 0.15  # image copy paste (probability), use 0 for faster training
 loss_ota: 1 # use ComputeLossOTA, use 0 for faster training
 zoom_in: 0.1
+
+
+
+#semi training
+semi_reg_loss_weight: 0.
+mix_label_num: 0
+semi_loss_weight: 2.0
+bbox_threshold: 0.4
+cls_threshold: 0.5
+burn_up_step: 500
+burn_up_epoch: 10
+teacher_update_iter: 1
+ema_keep_rate: 0.9996
+fl_gamma_semi: 1.5
+mls_filter_threshold: 0.2
+mls_threshold: 0.4
+nc: 1  # number of classes
+supervised_epoch: 0
+val_on_iter: 100
+val_per_epoch: 1

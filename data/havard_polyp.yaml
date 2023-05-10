@@ -8,6 +8,7 @@ train: /mnt/disk1/nguyen.thanh.huyenb/PolypsSet/Semi_PolypsSet/semi_1_labels_fol
  # 118287 images
 val: /mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid # 5000 images
 test: /mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB
+unlabel: /mnt/disk1/nguyen.thanh.huyenb/PolypsSet/Semi_PolypsSet/semi_1_labels_fold_1_percent_10/train2019.1@10-unlabeled.json  
 
 # number of classes
 nc: 1

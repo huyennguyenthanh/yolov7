@@ -10,6 +10,7 @@ import time
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
+from typing import OrderedDict
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -22,6 +23,29 @@ try:
 except ImportError:
     thop = None
 logger = logging.getLogger(__name__)
+
+
+
+@torch.no_grad()
+def _update_teacher_model(student, teacher, word_size=1, keep_rate=0.996):
+    if word_size > 1:
+        student_model_dict = {
+            key[7:]: value for key, value in student.state_dict().items()
+        }
+    else:
+        student_model_dict = student.state_dict()
+
+    new_teacher_dict = OrderedDict()
+    for key, value in teacher.state_dict().items():
+        if key in student_model_dict.keys():
+            new_teacher_dict[key] = (
+                student_model_dict[key] * (1 - keep_rate) + value * keep_rate
+            )
+        else:
+            raise Exception("{} is not found in student model".format(key))
+
+    teacher.load_state_dict(new_teacher_dict)
+    return teacher
 
 
 @contextmanager
