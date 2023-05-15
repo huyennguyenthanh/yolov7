@@ -19,7 +19,8 @@ from utils.datasets import (
 from utils.datasets import LoadImagesAndLabels
 from utils.general import xywhn2xyxy, xyxy2xywh
 from utils.torch_utils import torch_distributed_zero_first
-
+from torch.utils.data import Dataset, DataLoader, Sampler
+from torch.utils.data import ConcatDataset
 
 def create_dataloader_semi(
     path,
@@ -84,14 +85,115 @@ def create_dataloader_semi(
     return dataloader, dataset
 
 
-# def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):
-#     # Convert nx4 boxes from [x, y, w, h] normalized to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-#     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
-#     y[:, 0] = w * (x[:, 0] - x[:, 2] / 2) + padw  # top left x
-#     y[:, 1] = h * (x[:, 1] - x[:, 3] / 2) + padh  # top left y
-#     y[:, 2] = w * (x[:, 0] + x[:, 2] / 2) + padw  # bottom right x
-#     y[:, 3] = h * (x[:, 1] + x[:, 3] / 2) + padh  # bottom right y
-#     return y
+class AlternateSampler(Sampler):
+    def __init__(self, dataset_a, dataset_b, batch_size):
+        self.dataset_a = dataset_a
+        self.dataset_b = dataset_b
+        self.batch_size = batch_size
+
+    def __iter__(self):
+        a_indexes = torch.randperm(len(self.dataset_a)).tolist()
+        b_indexes = torch.randperm(len(self.dataset_b)).tolist()
+        a_count = 0
+        b_count = 0
+        while True:
+            batch_indexes = []
+            for i in range(self.batch_size // 2):
+                if a_count >= len(self.dataset_a):
+                    a_indexes = torch.randperm(len(self.dataset_a)).tolist()
+                    a_count = 0
+                if b_count >= len(self.dataset_b):
+                    b_indexes = torch.randperm(len(self.dataset_b)).tolist()
+                    b_count = 0
+                batch_indexes.append(a_indexes[a_count])
+                batch_indexes.append(b_indexes[b_count])
+                a_count += 1
+                b_count += 1
+            yield batch_indexes
+
+    def __len__(self):
+        return (len(self.dataset_a) + len(self.dataset_b)) // self.batch_size
+    
+
+def create_dataloader_combine(label_dataset, unlabel_dataset, batch_size):
+    sampler = AlternateSampler(label_dataset, unlabel_dataset, batch_size=batch_size)
+    data_loader = DataLoader(torch.utils.data.ChainDataset([label_dataset, unlabel_dataset]), batch_size=batch_size,   collate_fn=LoadImagesAndLabelsSemi.collate_fn4, sampler=sampler)
+    return data_loader
+
+# class X10Dataset(torch.utils.data.Dataset):
+#     def __init__(self, dataset):
+#         self.dataset = dataset
+
+#     def __len__(self):
+#         return len(self.dataset) * 10
+
+#     def __getitem__(self, index):
+#         return self.dataset[index % len(self.dataset)]
+
+#     def __getattr__(self, name):
+#         return getattr(self.dataset, name)
+# def create_dataloader_label(path,
+#         imgsz,
+#         batch_size,
+#         stride,
+#         opt,
+#         hyp=None,
+#         augment=False,
+#         cache=False,
+#         pad=0.0,
+#         rect=False,
+#         rank=-1,
+#         world_size=1,
+#         workers=8,
+#         image_weights=False,
+#         quad=False,
+#         prefix="",
+#         mosaic=False,
+#         num_images=10000000
+#     ):
+#     with torch_distributed_zero_first(rank):
+#         dataset = LoadImagesAndLabelsSemi(
+#             path,
+#             imgsz,
+#             batch_size,
+#             augment=augment,  # augment images
+#             hyp=hyp,  # augmentation hyperparameters
+#             rect=rect,  # rectangular training
+#             cache_images=cache,
+#             single_cls=opt.single_cls,
+#             stride=int(stride),
+#             pad=pad,
+#             image_weights=image_weights,
+#             prefix=prefix,
+#             mosaic=mosaic,
+           
+#         )
+#      # Create a list of 10 copies of the dataset
+#     # datasets = [dataset] * 10
+
+#     # # Concatenate the datasets
+#     # dataset = ConcatDataset(datasets)
+#     dataset = X10Dataset(dataset)
+#     batch_size = min(batch_size, len(dataset))
+#     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
+#     sampler = (
+#         torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
+#     )
+#     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
+
+#     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
+#     dataloader = loader(
+#         dataset,
+#         batch_size=batch_size,
+#         num_workers=nw,
+#         sampler=sampler,
+#         pin_memory=True,
+#         shuffle=True,
+#         collate_fn=LoadImagesAndLabelsSemi.collate_fn4
+#         if quad
+#         else LoadImagesAndLabelsSemi.collate_fn,
+#     )
+#     return dataloader, dataset
 
 
 class GaussianBlur:
@@ -113,8 +215,6 @@ class GaussianBlur:
 
 
 import torchvision.transforms as transforms
-
-
 def build_strong_augmentation():
     """
     Create a list of :class:`Augmentation` from config.
@@ -152,8 +252,9 @@ def build_strong_augmentation():
 
     return transforms.Compose(augmentation)
 
-
 class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
+
+
     def __init__(
         self,
         path,
@@ -340,3 +441,6 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
     @staticmethod
     def collate_fn4(batch):
         return super().collate_fn4(batch)
+    
+    
+

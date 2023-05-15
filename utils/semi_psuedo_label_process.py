@@ -191,21 +191,13 @@ def non_max_suppression_pseudo_decouple(
     """Runs Non-Maximum Suppression (NMS) on inference results
     Arguments:
         prediction: a tensor of shape (batch_size, num_boxes, num_classes+5), 
-
         conf_thres: a float value between 0 and 1, representing the confidence threshold for filtering out low-confidence detections based on the objectness score.
-
         cls_thres: a float value between 0 and 1, representing the confidence threshold for filtering out low-confidence detections based on the class scores.  
-
         iou_thres: a float value between 0 and 1, representing the IoU (Intersection over Union) threshold for suppressing overlapping detections.
-
         classes: a list of integers representing the indices of the object classes to consider during NMS. If not specified, all classes will be considered.
-
         agnostic: a boolean value indicating whether to perform class-agnostic NMS. If True, objectness and class scores will be considered separately during NMS.
-
         multi_label: a boolean value indicating whether to allow multiple labels per box. If True, the class with the highest score will be used as the label.
-
         labels: a tensor of shape (num_boxes, 6), where each row corresponds to a ground truth bounding box in the format (image_index, class_index, x_center, y_center, width, height). If specified, these labels will be used to perform auto-labeling during NMS.
-
         max_det: an integer value indicating the maximum number of detections to output per image.
     Returns:
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]
