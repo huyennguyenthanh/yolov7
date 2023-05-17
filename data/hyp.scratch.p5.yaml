@@ -24,7 +24,7 @@ shear: 0.0  # image shear (+/- deg)
 perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
 flipud: 0.0  # image flip up-down (probability)
 fliplr: 0.5  # image flip left-right (probability)
-mosaic: 0.5 # image mosaic (probability)
+mosaic: 0.7 # image mosaic (probability)
 mixup: 0.15  # image mixup (probability)
 copy_paste: 0.0  # image copy paste (probability)
 paste_in: 0.15  # image copy paste (probability), use 0 for faster training
@@ -38,15 +38,14 @@ semi_reg_loss_weight: 0.
 mix_label_num: 0
 semi_loss_weight: 2.0
 bbox_threshold: 0.4
-cls_threshold: 0.5
+cls_threshold: 0.3
 burn_up_step: 500
-burn_up_epoch: 10
 teacher_update_iter: 1
 ema_keep_rate: 0.9996
 fl_gamma_semi: 1.5
 mls_filter_threshold: 0.2
 mls_threshold: 0.4
 nc: 1  # number of classes
-supervised_epoch: 0
-val_on_iter: 100
+supervised_epoch: 5
+val_on_iter: 500
 val_per_epoch: 1

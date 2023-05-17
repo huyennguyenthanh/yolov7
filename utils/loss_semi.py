@@ -55,7 +55,7 @@ class ComputeLossOTASemi:
             setattr(self, k, getattr(det, k))
 
     def __call__(
-        self, p, targets, imgs, cls_only=False, bbox_only=False, semi=False
+        self, p, targets, imgs, cls_only=False, bbox_only=False, obj_only=False, semi=False
     ):  # predictions, targets, model
         device = targets.device
         lcls, lbox, lobj = (
@@ -125,9 +125,12 @@ class ComputeLossOTASemi:
         if cls_only:
             return lcls * bs, torch.cat((lobj * 0.0, lcls, lbox / 2)).detach()
         if bbox_only:
-            return (lobj + lbox * self.hyp["semi_reg_loss_weight"]) * bs, torch.cat(
+            return lbox * bs, torch.cat(
                 (lobj, lcls * 0.0, lbox / 2)
             ).detach()
+        
+        if obj_only:
+            return lobj * bs, torch.cat((lobj * 0.0, lcls, lbox / 2)).detach()
 
         loss = lobj + lcls + lbox * self.hyp["semi_reg_loss_weight"]
         return (loss) * bs, torch.cat((lobj, lcls, loss)).detach()
