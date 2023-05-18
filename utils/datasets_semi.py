@@ -323,17 +323,31 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
                 labels[:, 1:] = xywhn2xyxy(
                     labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1]
                 )
+        if random.random() < 0.4:
+            degrees=hyp["degrees"]
+            translate=hyp["translate"]
+            scale=hyp["scale"]
+            shear=hyp["shear"]
+            perspective=hyp["perspective"]
+        else:
+            degrees=0.0
+            translate=0.0
+            scale=0.1
+            shear=0.0
+            perspective=0.0
 
-        if self.augment:
+
+        if self.augment and not mosaic:
             img, labels = random_perspective(
                 img,
                 labels,
-                degrees=hyp["degrees"],
-                translate=hyp["translate"],
-                scale=hyp["scale"],
-                shear=hyp["shear"],
-                perspective=hyp["perspective"],
+                degrees=degrees,
+                translate=translate,
+                scale=scale,
+                shear=shear,
+                perspective=perspective,
             )
+
 
         nl = len(labels)  # number of labels
         if nl:

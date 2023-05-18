@@ -13,9 +13,10 @@ torchvision>=0.8.1,!=0.13.0
 tqdm>=4.41.0
 protobuf<4.21.3
 
+pycocotools
 # Logging -------------------------------------
-tensorboard>=2.4.1
-# wandb
+# tensorboard>=2.4.1
+wandb
 
 # Plotting ------------------------------------
 pandas>=1.1.4

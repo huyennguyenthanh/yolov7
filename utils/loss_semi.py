@@ -123,14 +123,14 @@ class ComputeLossOTASemi:
         bs = tobj.shape[0]  # batch size
 
         if cls_only:
-            return lcls * bs, torch.cat((lobj * 0.0, lcls, lbox / 2)).detach()
+            return lcls * bs, torch.cat((lobj * 0.0, lcls, lbox)).detach()
         if bbox_only:
             return lbox * bs, torch.cat(
-                (lobj, lcls * 0.0, lbox / 2)
+                (lobj/2, lcls * 0.0, lbox)
             ).detach()
         
         if obj_only:
-            return lobj * bs, torch.cat((lobj * 0.0, lcls, lbox / 2)).detach()
+            return lobj * bs, torch.cat((lobj, lcls * 0.0, lbox)).detach()
 
         loss = lobj + lcls + lbox * self.hyp["semi_reg_loss_weight"]
         return (loss) * bs, torch.cat((lobj, lcls, loss)).detach()

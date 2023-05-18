@@ -40,7 +40,7 @@ def test(data,
          half_precision=True,
          trace=False,
          is_coco=False,
-         v5_metric=False):
+         v5_metric=False, epoch=0, iter=0):
     # Initialize/load model and set device
     training = model is not None
     if training:  # called by train.py
@@ -212,10 +212,10 @@ def test(data,
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if plots and batch_i < 3:
-            f = save_dir / f'test_batch{batch_i}_labels.jpg'  # labels
+        if plots and (batch_i % round(len(dataloader)/5) == 0):
+            f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_labels.jpg'  # labels
             Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
-            f = save_dir / f'test_batch{batch_i}_pred.jpg'  # predictions
+            f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_pred.jpg'  # predictions
             Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
 
     # Compute statistics
