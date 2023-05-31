@@ -36,7 +36,7 @@ from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.loss_semi import ComputeLossOTASemi
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
-from utils.semi_psuedo_label_process import non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
+from utils.semi_psuedo_label_process import convert_output_to_label, non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
 from utils.torch_utils import ModelEMA, _update_teacher_model, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
@@ -86,9 +86,10 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    if pretrained:
-        with torch_distributed_zero_first(rank):
-            attempt_download(weights)  # download if not found locally
+    if True:
+        weights = "/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_test_semi/fold_1_percent_10_semi23/weights/best.pt"
+        # with torch_distributed_zero_first(rank):
+        #     attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         model_teacher = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
@@ -101,7 +102,9 @@ def train(hyp, opt, device, tb_writer=None):
         csd_t = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
         csd_t = intersect_dicts(csd_t, model_teacher.state_dict(), exclude=exclude)  # intersec
         model_teacher.load_state_dict(csd_t, strict=False)  # load
-
+        # model = attempt_load(weights, map_location=device) 
+        # model_teacher = attempt_load(weights, map_location=device) 
+      
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
         logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model_teacher.state_dict()), weights))  # report
     else:
@@ -218,32 +221,32 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Resume
     start_epoch, best_fitness = 0, 0.0
-    if pretrained:
-        # Optimizer
-        if ckpt['optimizer'] is not None:
-            optimizer.load_state_dict(ckpt['optimizer'])
-            best_fitness = ckpt['best_fitness']
+    # if pretrained:
+    #     # Optimizer
+    #     if ckpt['optimizer'] is not None:
+    #         optimizer.load_state_dict(ckpt['optimizer'])
+    #         best_fitness = ckpt['best_fitness']
 
-        # EMA
-        if ema and ckpt.get('ema'):
-            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
-            ema.updates = ckpt['updates']
+    #     # EMA
+    #     if ema and ckpt.get('ema'):
+    #         ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+    #         ema.updates = ckpt['updates']
 
-        # Results
-        if ckpt.get('training_results') is not None:
-            results_file.write_text(ckpt['training_results'])  # write results.txt
+    #     # Results
+    #     if ckpt.get('training_results') is not None:
+    #         results_file.write_text(ckpt['training_results'])  # write results.txt
 
-        # Epochs
-        start_epoch = ckpt['epoch'] + 1
+    #     # Epochs
+    #     start_epoch = ckpt['epoch'] + 1
    
-        # if opt.resume:
-        #     assert start_epoch > 0, '%s training to %g epochs is finished, nothing to resume.' % (weights, epochs)
-        if epochs < start_epoch:
-            logger.info('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
-                        (weights, ckpt['epoch'], epochs))
-            epochs += ckpt['epoch']  # finetune additional epochs
+    #     # if opt.resume:
+    #     #     assert start_epoch > 0, '%s training to %g epochs is finished, nothing to resume.' % (weights, epochs)
+    #     if epochs < start_epoch:
+    #         logger.info('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
+    #                     (weights, ckpt['epoch'], epochs))
+    #         epochs += ckpt['epoch']  # finetune additional epochs
 
-        del ckpt, state_dict
+    #     del ckpt, state_dict
 
     # Image sizes
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
@@ -266,7 +269,7 @@ def train(hyp, opt, device, tb_writer=None):
                                             image_weights=opt.image_weights, quad=opt.quad, mosaic=True, prefix=colorstr('train: '))
     train_unlabel_loader, dataset_unlabel = create_dataloader_semi(unlabel_path, imgsz, batch_size,
                                                                    gs, opt,
-                                                                   hyp=hyp, augment=True, cache=opt.cache_images,
+                                                                   hyp=hyp, augment=False, cache=opt.cache_images,
                                                                    rect=opt.rect, rank=rank,  world_size=opt.world_size,
                                                                    workers=opt.workers, image_weights=opt.image_weights,
                                                                    quad=opt.quad,
@@ -339,6 +342,9 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
     torch.save(model, wdir / 'init.pt')
+
+    bbox_threshold = hyp['bbox_threshold']
+    cls_threshold = hyp['cls_threshold']
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
 
@@ -382,11 +388,13 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
+        bbox_threshold -= 0.05
+        cls_threshold += 0.05
         for i, data in pbar:  # batch -------------------------------------------------------------
-           
+            
             semi_label_items = torch.zeros(1, device=device)
-            (label_imgs, label_targets, label_class_one_hot), (
-                unlabel_imgs, unlabel_targets, unlabel_class_one_hot) = data
+            (label_imgs, label_targets, label_paths, label_shapes), (
+                unlabel_imgs, unlabel_targets, unlabel_paths, unlabel_shapes) = data
             label_imgs_weak_aug, label_imgs_strong_aug = label_imgs
             unlabel_imgs_weak_aug, unlabel_imgs_strong_aug = unlabel_imgs
            
@@ -516,43 +524,52 @@ def train(hyp, opt, device, tb_writer=None):
                     try:
                         
                         out = model_teacher(unlabel_imgs_weak_aug,augment=True)[0]
+                        import pdb; pdb.set_trace()
                         """post-processing
                         """
-                        import pdb; pdb.set_trace()
+                       
                         
-                        bbox_threshold = hyp['bbox_threshold'] + epoch/5 * 0.05
-                        cls_threshold = hyp['cls_threshold'] + epoch/5 * 0.05
                         pred = non_max_suppression(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
+                        pseudo_label = convert_output_to_label(unlabel_imgs_weak_aug, pred, unlabel_shapes, conf=True).to(device)
+                        semi_label_items += pseudo_label.shape[0]
+                        
+                        if (i < 3 or i % round(nb/3) == 0) and (epoch % round(epochs/5) == 0):
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label.jpg"
+                            Thread(
+                                target=plot_images,
+                                args=(unlabel_imgs_weak_aug, pseudo_label, None, f),
+                                daemon=True,
+                            ).start()
                         # if pred[0].shape == torch.Size([0,6]):
                         #     import pdb; pdb.set_trace()
-                        pseudo_boxes_reg, pseudo_boxes_cls = pred, pred
+                        unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
                         # if isinstance(out,list):
                         #     pseudo_boxes_reg, pseudo_boxes_cls = non_max_suppression_pseudo_decouple_multi_view(out, bbox_threshold, cls_threshold, multi_label=True)
                         # else:
                         #     pseudo_boxes_reg,pseudo_boxes_cls = non_max_suppression_pseudo_decouple(out,bbox_threshold, cls_threshold, multi_label=True)
                     
-                        unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
-                        unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
-                        for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
-                                zip(pseudo_boxes_reg,pseudo_boxes_cls)):
-                            # two stage filters
-                            n_box = pseudo_box_cls.size()[0]
-                            unlabel_target_cls = torch.zeros(n_box, 6).to(device)
-                            unlabel_target_cls[:, 0] = batch_ind
-                            unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
-                            unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                                                                h=unlabel_imgs_weak_aug.size()[3])
-                            unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
+                        # unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
+                        # unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
+                        # for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
+                        #         zip(pseudo_boxes_reg,pseudo_boxes_cls)):
+                        #     # two stage filters
+                        #     n_box = pseudo_box_cls.size()[0]
+                        #     unlabel_target_cls = torch.zeros(n_box, 6).to(device)
+                        #     unlabel_target_cls[:, 0] = batch_ind
+                        #     unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
+                        #     unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
+                        #                                         h=unlabel_imgs_weak_aug.size()[3])
+                        #     unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
 
 
-                            n_box = pseudo_box_reg.size()[0]
-                            unlabel_target_reg = torch.zeros(n_box, 6).to(device)
-                            unlabel_target_reg[:, 0] = batch_ind
-                            unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
-                            unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                                                                h=unlabel_imgs_weak_aug.size()[3])
-                            unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
-                            semi_label_items += n_box
+                        #     n_box = pseudo_box_reg.size()[0]
+                        #     unlabel_target_reg = torch.zeros(n_box, 6).to(device)
+                        #     unlabel_target_reg[:, 0] = batch_ind
+                        #     unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
+                        #     unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
+                        #                                         h=unlabel_imgs_weak_aug.size()[3])
+                        #     unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
+                        #     semi_label_items += n_box
                         # semi_label_items += pred.shape[0]
                     except Exception as e:
                         print(e)
@@ -649,7 +666,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                 dataloader=testloader,
                                                 save_dir=save_dir,
                                                 verbose=nc < 50 and final_epoch,
-                                                plots=(epoch % 1 == 0),
+                                                plots=False,
                                                 wandb_logger=wandb_logger,
                                                 compute_loss=compute_loss,
                                                 is_coco=is_coco,
@@ -713,7 +730,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                  dataloader=testloader,
                                                  save_dir=save_dir,
                                                  verbose=nc < 50 and final_epoch,
-                                                 plots=(epoch % 1 == 0),
+                                                 plots=False,
                                                  wandb_logger=wandb_logger,
                                                  compute_loss=compute_loss,
                                                  is_coco=is_coco,
@@ -763,7 +780,7 @@ def train(hyp, opt, device, tb_writer=None):
                 torch.save(ckpt, last)
                 if best_fitness == fi:
                     torch.save(ckpt, best)
-                if ((epoch+1) % 25) == 0:
+                if ((epoch+1) % 1) == 0:
                     torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
                 if wandb_logger.wandb:
                     if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
@@ -840,7 +857,7 @@ if __name__ == '__main__':
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
-    parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
+    parser.add_argument('--local-rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--workers', type=int, default=8, help='maximum number of dataloader workers')
     parser.add_argument('--project', default='runs/train', help='save to project/name')
     parser.add_argument('--entity', default=None, help='W&B entity')

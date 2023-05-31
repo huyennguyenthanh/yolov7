@@ -405,22 +405,25 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
             label_class_one_hot[ind] = 1
 
         return (
-            torch.from_numpy(image_weak_aug) / 255,
-            torch.from_numpy(image_strong_aug) / 255,
+            torch.from_numpy(image_weak_aug/ 255.0),
+            torch.from_numpy(image_strong_aug/ 255.0),
             labels_out,
-            label_class_one_hot.unsqueeze(0),
+            # label_class_one_hot.unsqueeze(0),
             self.img_files[index],
+            shapes, 
         )
 
     @staticmethod
     def collate_fn(batch):
-        img_w, img_s, label, label_class_one_hot, path = zip(*batch)  # transposed
+        img_w, img_s, label, path, shape = zip(*batch)  # transposed
         for i, l in enumerate(label):
             l[:, 0] = i  # add target image index for build_targets()
         return (
             (torch.stack(img_w, 0), torch.stack(img_s, 0)),
             torch.cat(label, 0),
-            torch.cat(label_class_one_hot, 0),
+            # torch.cat(label_class_one_hot, 0),
+            path, 
+            shape
         )
 
     @staticmethod

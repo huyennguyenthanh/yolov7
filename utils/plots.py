@@ -100,6 +100,7 @@ def plot_wh_methods():  # from utils.plots import *; plot_wh_methods()
     plt.grid()
     plt.legend()
     fig.savefig('comparison.png', dpi=200)
+    plt.close(fig)
 
 
 def output_to_target(output):
@@ -168,9 +169,9 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 cls = int(classes[j])
                 color = colors[cls % len(colors)]
                 cls = names[cls] if names else cls
-                if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                    label = '%s' % cls if labels else '%s %.1f' % (cls, conf[j])
-                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                # if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                label = '%s' % cls if labels else '%s %.2f' % (cls, conf[j])
+                plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
 
         # Draw image filename labels
         if paths:
@@ -187,6 +188,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         mosaic = cv2.resize(mosaic, (int(ns * w * r), int(ns * h * r)), interpolation=cv2.INTER_AREA)
         # cv2.imwrite(fname, cv2.cvtColor(mosaic, cv2.COLOR_BGR2RGB))  # cv2 save
         Image.fromarray(mosaic).save(fname)  # PIL save
+        plt.close()
     return mosaic
 
 
@@ -222,6 +224,7 @@ def plot_test_txt():  # from utils.plots import *; plot_test()
     ax[0].hist(cx, bins=600)
     ax[1].hist(cy, bins=600)
     plt.savefig('hist1d.png', dpi=200)
+    plt.close()
 
 
 def plot_targets_txt():  # from utils.plots import *; plot_targets_txt()
@@ -235,6 +238,7 @@ def plot_targets_txt():  # from utils.plots import *; plot_targets_txt()
         ax[i].legend()
         ax[i].set_title(s[i])
     plt.savefig('targets.jpg', dpi=200)
+    plt.close()
 
 
 def plot_study_txt(path='', x=None):  # from utils.plots import *; plot_study_txt()
@@ -267,6 +271,7 @@ def plot_study_txt(path='', x=None):  # from utils.plots import *; plot_study_tx
     ax2.set_ylabel('COCO AP val')
     ax2.legend(loc='lower right')
     plt.savefig(str(Path(path).name) + '.png', dpi=300)
+    plt.close()
 
 
 def plot_labels(labels, names=(), save_dir=Path(''), loggers=None):
@@ -339,6 +344,7 @@ def plot_evolution(yaml_file='data/hyp.finetune.yaml'):  # from utils.plots impo
             plt.yticks([])
         print('%15s: %.3g' % (k, mu))
     plt.savefig('evolve.png', dpi=200)
+    plt.close()
     print('\nPlot saved as evolve.png')
 
 
@@ -372,6 +378,7 @@ def profile_idetection(start=0, stop=0, labels=(), save_dir=''):
 
     ax[1].legend()
     plt.savefig(Path(save_dir) / 'idetection_profile.png', dpi=200)
+    plt.close()
 
 
 def plot_results_overlay(start=0, stop=0):  # from utils.plots import *; plot_results_overlay()
@@ -395,6 +402,7 @@ def plot_results_overlay(start=0, stop=0):  # from utils.plots import *; plot_re
             ax[i].legend()
             ax[i].set_ylabel(f) if i == 0 else None  # add filename
         fig.savefig(f.replace('.txt', '.png'), dpi=200)
+        plt.close(fig)
 
 
 def plot_results(start=0, stop=0, bucket='', id=(), labels=(), save_dir=''):
@@ -431,6 +439,7 @@ def plot_results(start=0, stop=0, bucket='', id=(), labels=(), save_dir=''):
 
     ax[1].legend()
     fig.savefig(Path(save_dir) / 'results.png', dpi=200)
+    plt.close(fig)
     
     
 def output_to_keypoint(output):

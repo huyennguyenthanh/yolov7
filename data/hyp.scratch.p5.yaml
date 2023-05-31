@@ -19,12 +19,12 @@ hsv_s: 0.5  # image HSV-Saturation augmentation (fraction)
 hsv_v: 0.3  # image HSV-Value augmentation (fraction)
 degrees: 30.0  # image rotation (+/- deg)
 translate: 0.2  # image translation (+/- fraction)
-scale: 0.3  # image scale (+/- gain)
+scale: 0.5  # image scale (+/- gain)
 shear: 0.0  # image shear (+/- deg)
 perspective: 0.0005  # image perspective (+/- fraction), range 0-0.001
 flipud: 0.3  # image flip up-down (probability)
 fliplr: 0.5  # image flip left-right (probability)
-mosaic: 0.7 # image mosaic (probability)
+mosaic: 1 # image mosaic (probability)
 mixup: 0.15  # image mixup (probability)
 copy_paste: 0.0  # image copy paste (probability)
 paste_in: 0.15  # image copy paste (probability), use 0 for faster training
@@ -36,9 +36,9 @@ zoom_in: 0.1
 #semi training
 semi_reg_loss_weight: 0.
 mix_label_num: 0
-semi_loss_weight: 2.0
-bbox_threshold: 0.4
-cls_threshold: 0.3
+semi_loss_weight: 1.0
+bbox_threshold: 0.6
+cls_threshold: 0.2
 burn_up_step: 500
 teacher_update_iter: 1
 ema_keep_rate: 0.9996
@@ -46,6 +46,6 @@ fl_gamma_semi: 1.5
 mls_filter_threshold: 0.2
 mls_threshold: 0.4
 nc: 1  # number of classes
-supervised_epoch: 0
-val_on_iter: 500
+supervised_epoch: 5
+val_on_iter: 100
 val_per_epoch: 1
