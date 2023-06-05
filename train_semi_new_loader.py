@@ -86,8 +86,8 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    if pretrained:
-        weights = "/home/nguyen.thanh.huyenb/yolov7/YOLOv7_test_semi/base_weights/epoch_03.pt"
+    if True:
+        weights = "/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/base_weights/epoch_03.pt"
         # with torch_distributed_zero_first(rank):
         #     attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -288,7 +288,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(test_path, imgsz_test, batch_size * 4, gs, opt,  # testloader
+        testloader = create_dataloader(test_path, imgsz_test, batch_size, gs, opt,  # testloader
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
@@ -519,61 +519,61 @@ def train(hyp, opt, device, tb_writer=None):
                         """
                        
                         
-                        pred = non_max_suppression(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
-                        pseudo_label = convert_output_to_label(unlabel_imgs_weak_aug, pred, unlabel_shapes, conf=True).to(device)
-                        semi_label_items += pseudo_label.shape[0]
+                        # pred = non_max_suppression(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
+                        # pseudo_label = convert_output_to_label(unlabel_imgs_weak_aug, pred, unlabel_shapes, conf=True).to(device)
+                        # semi_label_items += pseudo_label.shape[0]
                         
+                        
+                        # pseudo_label = pseudo_label[:, :6] 
+                       
+                        # unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
+                        
+                        pseudo_boxes_reg,pseudo_boxes_cls = non_max_suppression_pseudo_decouple(out,bbox_threshold, cls_threshold)
+                    
+                        unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
+                        unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
+                        for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
+                                zip(pseudo_boxes_reg,pseudo_boxes_cls)):
+                            # two stage filters
+                            n_box = pseudo_box_cls.size()[0]
+                            unlabel_target_cls = torch.zeros(n_box, 6).to(device)
+                            unlabel_target_cls[:, 0] = batch_ind
+                            unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
+                            unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
+                                                                h=unlabel_imgs_weak_aug.size()[3])
+                            unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
+
+
+                            n_box = pseudo_box_reg.size()[0]
+                            unlabel_target_reg = torch.zeros(n_box, 6).to(device)
+                            unlabel_target_reg[:, 0] = batch_ind
+                            unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
+                            unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
+                                                                h=unlabel_imgs_weak_aug.size()[3])
+                            unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
+                            # semi_label_items += n_box
+                       
+                        semi_label_items += unlabel_targets_merge_reg.shape[0] + unlabel_targets_merge_cls.shape[0]
+
                         if (i < 3 or i % round(nb/3) == 0):
-                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label.jpg"
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_red.jpg"
                             Thread(
                                 target=plot_images,
-                                args=(unlabel_imgs_weak_aug, pseudo_label, None, f),
+                                args=(unlabel_imgs_weak_aug, unlabel_targets_merge_reg, None, f),
                                 daemon=True,
                             ).start()
-                            # f =  save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_weak.jpg"
-                            # Thread(
-                            #     target=plot_images,
-                            #     args=(unlabel_imgs_weak_aug, unlabel_targets, None, f),
-                            #     daemon=True,
-                            # ).start()
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_psuedo_label_cls.jpg"
+                            Thread(
+                                target=plot_images,
+                                args=(unlabel_imgs_weak_aug, unlabel_targets_merge_cls, None, f),
+                                daemon=True,
+                            ).start()
                             f = save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_strong.jpg"
                             Thread(
                                 target=plot_images,
                                 args=(unlabel_imgs_strong_aug, unlabel_targets, None, f),
                                 daemon=True,
                             ).start()
-                        pseudo_label = pseudo_label[:, :6] 
-                        # if pred[0].shape == torch.Size([0,6]):
-                        #     import pdb; pdb.set_trace()
-                        unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
-                        # if isinstance(out,list):
-                        #     pseudo_boxes_reg, pseudo_boxes_cls = non_max_suppression_pseudo_decouple_multi_view(out, bbox_threshold, cls_threshold, multi_label=True)
-                        # else:
-                        #     pseudo_boxes_reg,pseudo_boxes_cls = non_max_suppression_pseudo_decouple(out,bbox_threshold, cls_threshold, multi_label=True)
-                    
-                        # unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
-                        # unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
-                        # for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
-                        #         zip(pseudo_boxes_reg,pseudo_boxes_cls)):
-                        #     # two stage filters
-                        #     n_box = pseudo_box_cls.size()[0]
-                        #     unlabel_target_cls = torch.zeros(n_box, 6).to(device)
-                        #     unlabel_target_cls[:, 0] = batch_ind
-                        #     unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
-                        #     unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                        #                                         h=unlabel_imgs_weak_aug.size()[3])
-                        #     unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
-
-
-                        #     n_box = pseudo_box_reg.size()[0]
-                        #     unlabel_target_reg = torch.zeros(n_box, 6).to(device)
-                        #     unlabel_target_reg[:, 0] = batch_ind
-                        #     unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
-                        #     unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                        #                                         h=unlabel_imgs_weak_aug.size()[3])
-                        #     unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
-                        #     semi_label_items += n_box
-                        # semi_label_items += pred.shape[0]
                     except Exception as e:
                         print(e)
                         print(traceback.format_exc())
@@ -593,18 +593,17 @@ def train(hyp, opt, device, tb_writer=None):
                     with amp.autocast(enabled=cuda):
                         # print(ni)
                         pred = model(label_and_unlabel_imgs)  # forward
-                        import pdb; pdb.set_trace()
                         sup_pred=[p[:Bl] for p in pred]
                         semi_pred=[p[Bl:] for p in pred]
                     
                         loss, loss_items = compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
                         #pay attention: ignoring the regression term
-                        # semi_loss_cls, semi_loss_items_cls = compute_loss_semi(semi_pred, unlabel_targets_merge_cls.to(device), unlabel_imgs_strong_aug, obj_only=True)  # loss scaled by batch_size
-                        # semi_loss_reg, semi_loss_items_reg = compute_loss_semi(semi_pred, unlabel_targets_merge_reg.to(device), unlabel_imgs_strong_aug, bbox_only=True)  # loss scaled by batch_size
-                        # semi_loss = semi_loss_cls + semi_loss_reg
-                        semi_loss, semi_loss_items = compute_loss_semi(semi_pred, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                        semi_loss_cls, semi_loss_items_cls = compute_loss_semi(semi_pred, unlabel_targets_merge_cls.to(device), unlabel_imgs_strong_aug, obj_only=True)  # loss scaled by batch_size
+                        semi_loss_reg, semi_loss_items_reg = compute_loss_semi(semi_pred, unlabel_targets_merge_reg.to(device), unlabel_imgs_strong_aug, bbox_only=True)  # loss scaled by batch_size
+                        semi_loss = semi_loss_cls + semi_loss_reg
+                        # semi_loss, semi_loss_items = compute_loss_semi(semi_pred, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
 
-                        # semi_loss_items = 100 * semi_loss_items_cls + semi_loss_items_reg
+                        semi_loss_items = 10 * semi_loss_items_cls + semi_loss_items_reg
                         # print(semi_loss_items)
                         if rank != -1:
                             semi_loss *= opt.world_size  # gradient averaged between devices in DDP mode
