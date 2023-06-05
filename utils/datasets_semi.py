@@ -323,21 +323,23 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
                 labels[:, 1:] = xywhn2xyxy(
                     labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1]
                 )
-        if random.random() < 0.4:
+
+        augment_p = self.augment and random.random() < 0.8
+        if augment_p:
             degrees=hyp["degrees"]
             translate=hyp["translate"]
             scale=hyp["scale"]
             shear=hyp["shear"]
             perspective=hyp["perspective"]
         else:
-            degrees=0.0
+            degrees=10.0
             translate=0.0
             scale=0.1
             shear=0.0
             perspective=0.0
 
 
-        if self.augment and not mosaic:
+        if not mosaic:
             img, labels = random_perspective(
                 img,
                 labels,
@@ -405,8 +407,8 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
             label_class_one_hot[ind] = 1
 
         return (
-            torch.from_numpy(image_weak_aug/ 255.0),
-            torch.from_numpy(image_strong_aug/ 255.0),
+            torch.from_numpy(image_weak_aug),
+            torch.from_numpy(image_strong_aug),
             labels_out,
             # label_class_one_hot.unsqueeze(0),
             self.img_files[index],

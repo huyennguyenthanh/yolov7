@@ -14,7 +14,7 @@ from utils.loss import FocalLoss, smooth_BCE
 
 class ComputeLossOTASemi:
     # Compute losses
-    def __init__(self, model, autobalance=False):
+    def __init__(self, model, autobalance=False, BCE=True):
         super(ComputeLossOTASemi, self).__init__()
         device = next(model.parameters()).device  # get model device
         h = model.hyp  # hyperparameters
@@ -23,9 +23,15 @@ class ComputeLossOTASemi:
         BCEcls = nn.BCEWithLogitsLoss(
             pos_weight=torch.tensor([h["cls_pw"]], device=device)
         )
-        BCEobj = nn.BCEWithLogitsLoss(
-            pos_weight=torch.tensor([h["obj_pw"]], device=device)
-        )
+        if BCE:
+            BCEobj = nn.BCEWithLogitsLoss(
+                pos_weight=torch.tensor([h["obj_pw"]], device=device)
+            )
+        else:
+            BCEobj = nn.BCEWithLogitsLoss(
+                pos_weight=torch.tensor([h["obj_pw"]], device=device)
+            )
+
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
         self.cp, self.cn = smooth_BCE(
@@ -132,8 +138,10 @@ class ComputeLossOTASemi:
         if obj_only:
             return lobj * bs, torch.cat((lobj, lcls * 0.0, lbox)).detach()
 
-        loss = lobj + lcls + lbox * self.hyp["semi_reg_loss_weight"]
-        return (loss) * bs, torch.cat((lobj, lcls, loss)).detach()
+        # loss = lobj + lcls + lbox * self.hyp["semi_reg_loss_weight"]
+        # return (loss) * bs, torch.cat((lobj, lcls, loss)).detach()
+        loss = lbox + lobj + lcls
+        return loss * bs, torch.cat((lobj, lcls, lbox)).detach()
         # loss = lbox + lobj + lcls
         # return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 

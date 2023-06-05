@@ -86,8 +86,8 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    if True:
-        weights = "/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_test_semi/fold_1_percent_10_semi23/weights/best.pt"
+    if pretrained:
+        weights = "/home/nguyen.thanh.huyenb/yolov7/YOLOv7_test_semi/base_weights/epoch_03.pt"
         # with torch_distributed_zero_first(rank):
         #     attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -388,8 +388,9 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
-        bbox_threshold -= 0.05
-        cls_threshold += 0.05
+        if not  epoch < hyp["supervised_epoch"]:
+            bbox_threshold -= 0.05
+            cls_threshold += 0.1
         for i, data in pbar:  # batch -------------------------------------------------------------
             
             semi_label_items = torch.zeros(1, device=device)
@@ -402,7 +403,7 @@ def train(hyp, opt, device, tb_writer=None):
             label_imgs_weak_aug, label_imgs_strong_aug = label_imgs
             unlabel_imgs_weak_aug, unlabel_imgs_strong_aug = unlabel_imgs
 
-            if (i < 3 or i % round(nb/3) == 0) and (epoch % round(epochs/5) == 0):
+            if (i < 3 or i % round(nb/3) == 0) and epoch == 0:
                 f =  save_dir / f"train_epoch_{epoch}_batch_{i}_label_weak.jpg"
                 Thread(
                     target=plot_images,
@@ -415,24 +416,13 @@ def train(hyp, opt, device, tb_writer=None):
                     args=(label_imgs_strong_aug, label_targets, None, f),
                     daemon=True,
                 ).start()
-                f =  save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_weak.jpg"
-                Thread(
-                    target=plot_images,
-                    args=(unlabel_imgs_weak_aug, unlabel_targets, None, f),
-                    daemon=True,
-                ).start()
-                f = save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_strong.jpg"
-                Thread(
-                    target=plot_images,
-                    args=(unlabel_imgs_strong_aug, unlabel_targets, None, f),
-                    daemon=True,
-                ).start()
+            
            
 
-            label_imgs_weak_aug = label_imgs_weak_aug.to(device, non_blocking=True).float()
-            label_imgs_strong_aug = label_imgs_strong_aug.to(device, non_blocking=True).float()
-            unlabel_imgs_weak_aug = unlabel_imgs_weak_aug.to(device, non_blocking=True).float()
-            unlabel_imgs_strong_aug = unlabel_imgs_strong_aug.to(device, non_blocking=True).float()
+            label_imgs_weak_aug = label_imgs_weak_aug.to(device, non_blocking=True).float() / 255
+            label_imgs_strong_aug = label_imgs_strong_aug.to(device, non_blocking=True).float() / 255
+            unlabel_imgs_weak_aug = unlabel_imgs_weak_aug.to(device, non_blocking=True).float()  / 255
+            unlabel_imgs_strong_aug = unlabel_imgs_strong_aug.to(device, non_blocking=True).float()  / 255
             label_targets=label_targets.to(device, non_blocking=True)
             unlabel_targets = unlabel_targets.to(device, non_blocking=True)
         
@@ -477,7 +467,7 @@ def train(hyp, opt, device, tb_writer=None):
             if epoch < hyp["supervised_epoch"]:
                 """Supervised part
                 """
-                cls_threshold, bbox_threshold = 0,0
+                # cls_threshold, bbox_threshold = 0,0
                 label_targets_strong=label_targets.clone().detach()
                 if label_targets.size()[0] == 0 or label_targets_strong.size()[0] == 0:
                     print(label_imgs_weak_aug.size())
@@ -524,7 +514,7 @@ def train(hyp, opt, device, tb_writer=None):
                     try:
                         
                         out = model_teacher(unlabel_imgs_weak_aug,augment=True)[0]
-                        import pdb; pdb.set_trace()
+                        # import pdb; pdb.set_trace()
                         """post-processing
                         """
                        
@@ -533,13 +523,26 @@ def train(hyp, opt, device, tb_writer=None):
                         pseudo_label = convert_output_to_label(unlabel_imgs_weak_aug, pred, unlabel_shapes, conf=True).to(device)
                         semi_label_items += pseudo_label.shape[0]
                         
-                        if (i < 3 or i % round(nb/3) == 0) and (epoch % round(epochs/5) == 0):
+                        if (i < 3 or i % round(nb/3) == 0):
                             f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label.jpg"
                             Thread(
                                 target=plot_images,
                                 args=(unlabel_imgs_weak_aug, pseudo_label, None, f),
                                 daemon=True,
                             ).start()
+                            # f =  save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_weak.jpg"
+                            # Thread(
+                            #     target=plot_images,
+                            #     args=(unlabel_imgs_weak_aug, unlabel_targets, None, f),
+                            #     daemon=True,
+                            # ).start()
+                            f = save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_strong.jpg"
+                            Thread(
+                                target=plot_images,
+                                args=(unlabel_imgs_strong_aug, unlabel_targets, None, f),
+                                daemon=True,
+                            ).start()
+                        pseudo_label = pseudo_label[:, :6] 
                         # if pred[0].shape == torch.Size([0,6]):
                         #     import pdb; pdb.set_trace()
                         unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
@@ -590,16 +593,18 @@ def train(hyp, opt, device, tb_writer=None):
                     with amp.autocast(enabled=cuda):
                         # print(ni)
                         pred = model(label_and_unlabel_imgs)  # forward
+                        import pdb; pdb.set_trace()
                         sup_pred=[p[:Bl] for p in pred]
                         semi_pred=[p[Bl:] for p in pred]
                     
                         loss, loss_items = compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
                         #pay attention: ignoring the regression term
-                        semi_loss_cls, semi_loss_items_cls = compute_loss_semi(semi_pred, unlabel_targets_merge_cls.to(device), unlabel_imgs_strong_aug, obj_only=True)  # loss scaled by batch_size
-                        semi_loss_reg, semi_loss_items_reg = compute_loss_semi(semi_pred, unlabel_targets_merge_reg.to(device), unlabel_imgs_strong_aug, bbox_only=True)  # loss scaled by batch_size
-                        semi_loss = semi_loss_cls + semi_loss_reg
+                        # semi_loss_cls, semi_loss_items_cls = compute_loss_semi(semi_pred, unlabel_targets_merge_cls.to(device), unlabel_imgs_strong_aug, obj_only=True)  # loss scaled by batch_size
+                        # semi_loss_reg, semi_loss_items_reg = compute_loss_semi(semi_pred, unlabel_targets_merge_reg.to(device), unlabel_imgs_strong_aug, bbox_only=True)  # loss scaled by batch_size
+                        # semi_loss = semi_loss_cls + semi_loss_reg
+                        semi_loss, semi_loss_items = compute_loss_semi(semi_pred, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
 
-                        semi_loss_items = semi_loss_items_cls + semi_loss_items_reg
+                        # semi_loss_items = 100 * semi_loss_items_cls + semi_loss_items_reg
                         # print(semi_loss_items)
                         if rank != -1:
                             semi_loss *= opt.world_size  # gradient averaged between devices in DDP mode
@@ -648,7 +653,7 @@ def train(hyp, opt, device, tb_writer=None):
 
 
 
-            if rank in [-1, 0] and i % round(nb/10) == 0:
+            if rank in [-1, 0] and i % round(nb/20) == 0:
            
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
                 if epoch < hyp["supervised_epoch"]:

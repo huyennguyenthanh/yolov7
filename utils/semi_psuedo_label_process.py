@@ -342,6 +342,9 @@ def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
     return y
 
 def convert_output_to_label(imgs, preds, shapes, conf=False, device=torch.device('cuda:0')):
+    """
+        x,y,x,y, conf, label -> id, label, x,y,w,h,
+    """
     if conf:
         labels = torch.zeros(0, 7).to(device)
     else:
