@@ -87,7 +87,7 @@ def train(hyp, opt, device, tb_writer=None):
     # Model
     pretrained = weights.endswith('.pt')
     if True:
-        weights = "/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/base_weights/epoch_03.pt"
+        weights = "/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_2_percent_10_multi_view/weights/epoch_003.pt"
         # with torch_distributed_zero_first(rank):
         #     attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -116,7 +116,8 @@ def train(hyp, opt, device, tb_writer=None):
         check_dataset(data_dict)  # check
     train_path = data_dict['train']
     unlabel_path = data_dict['unlabel']
-    test_path = data_dict['val']
+    val_path = data_dict['val']
+    test_path = data_dict['test']
 
     # Freeze
     freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # parameter names to freeze (full or partial)
@@ -278,7 +279,7 @@ def train(hyp, opt, device, tb_writer=None):
     # nb = len(dataloader)  # number of batches
     # mlc = int(np.concatenate(dataset_label.labels, 0)[:,0].max())  
     #max(int(np.concatenate(dataset_label.labels, 0)[:, 0].max()),int(np.concatenate(dataset_unlabel.labels, 0)[:, 0].max()) ) # max label class
-    print(f"Len label dataset: {len(train_label_loader)} - Len unlabel dataset: {len(train_unlabel_loader)}")
+    print(f"Len label dataset: {dataset_label.__len__()} - Len unlabel dataset: {dataset_unlabel.__len__()}")
     nb = max(len(train_label_loader),len(train_unlabel_loader) ) # number of batches
 
 
@@ -288,10 +289,16 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(test_path, imgsz_test, batch_size, gs, opt,  # testloader
+        valloader = create_dataloader(val_path, imgsz_test, batch_size*4, gs, opt,  # valloader
                                        hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
+
+        testloader = create_dataloader(test_path, imgsz_test, batch_size*4, gs, opt,  # testloader
+                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
+                                       world_size=opt.world_size, workers=opt.workers,
+                                       pad=0.5, prefix=colorstr('val: '))[0]
+
 
         if not opt.resume:
             labels = np.concatenate(dataset_label.labels, 0)
@@ -348,6 +355,7 @@ def train(hyp, opt, device, tb_writer=None):
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
 
+     
         # Update image weights (optional)
         if opt.image_weights:
             # Generate indices
@@ -384,11 +392,15 @@ def train(hyp, opt, device, tb_writer=None):
 
         # logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
         logger.info(('\n' + '%10s' * 13) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_obj', 'semi_cls','semi_box', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres'))
+        with open(results_file, 'a') as f:
+            f.write('%10s' * 13 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_obj', 'semi_cls','semi_box', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres') \
+                    + '%10s' * 7 % ('Val/Precision', 'Val/Recall', 'Val/mAP50', 'Val/mAP50:95', 'loss_bbox', 'loss_obj', 'loss_cls'))
+            f.write('\n')
 
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
-        if not  epoch < hyp["supervised_epoch"]:
+        if not epoch <= hyp["supervised_epoch"] and (epoch - hyp["supervised_epoch"]) % 4 == 0:
             bbox_threshold -= 0.05
             cls_threshold += 0.1
         for i, data in pbar:  # batch -------------------------------------------------------------
@@ -403,7 +415,7 @@ def train(hyp, opt, device, tb_writer=None):
             label_imgs_weak_aug, label_imgs_strong_aug = label_imgs
             unlabel_imgs_weak_aug, unlabel_imgs_strong_aug = unlabel_imgs
 
-            if (i < 3 or i % round(nb/3) == 0) and epoch == 0:
+            if (i % round(nb/3) == 0) and epoch == 0:
                 f =  save_dir / f"train_epoch_{epoch}_batch_{i}_label_weak.jpg"
                 Thread(
                     target=plot_images,
@@ -513,7 +525,7 @@ def train(hyp, opt, device, tb_writer=None):
                 with torch.no_grad():
                     try:
                         
-                        out = model_teacher(unlabel_imgs_weak_aug,augment=True)[0]
+                        out = model_teacher(unlabel_imgs_weak_aug,augment=True, multi_view=True)
                         # import pdb; pdb.set_trace()
                         """post-processing
                         """
@@ -528,52 +540,57 @@ def train(hyp, opt, device, tb_writer=None):
                        
                         # unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
                         
-                        pseudo_boxes_reg,pseudo_boxes_cls = non_max_suppression_pseudo_decouple(out,bbox_threshold, cls_threshold)
-                    
-                        unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
-                        unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
-                        for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
-                                zip(pseudo_boxes_reg,pseudo_boxes_cls)):
-                            # two stage filters
-                            n_box = pseudo_box_cls.size()[0]
-                            unlabel_target_cls = torch.zeros(n_box, 6).to(device)
-                            unlabel_target_cls[:, 0] = batch_ind
-                            unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
-                            unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                                                                h=unlabel_imgs_weak_aug.size()[3])
-                            unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
+                        pseudo_boxes_reg,pseudo_boxes_cls = non_max_suppression_pseudo_decouple_multi_view(out,iou_thres=bbox_threshold, cls_thres=0, conf_thres=cls_threshold)
+                        unlabel_targets_merge_reg = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), pseudo_boxes_reg, unlabel_shapes, conf=True).to(device)
+                        unlabel_targets_merge_cls = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), pseudo_boxes_cls, unlabel_shapes, conf=True).to(device)
+                        # unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
+                        # unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
+                        # for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
+                        #         zip(pseudo_boxes_reg,pseudo_boxes_cls)):
+                        #     # two stage filters
+                        #     n_box = pseudo_box_cls.size()[0]
+                        #     unlabel_target_cls = torch.zeros(n_box, 6).to(device)
+                        #     unlabel_target_cls[:, 0] = batch_ind
+                        #     unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
+                        #     unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
+                        #                                         h=unlabel_imgs_weak_aug.size()[3])
+                        #     unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
 
 
-                            n_box = pseudo_box_reg.size()[0]
-                            unlabel_target_reg = torch.zeros(n_box, 6).to(device)
-                            unlabel_target_reg[:, 0] = batch_ind
-                            unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
-                            unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                                                                h=unlabel_imgs_weak_aug.size()[3])
-                            unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
+                        #     n_box = pseudo_box_reg.size()[0]
+                        #     unlabel_target_reg = torch.zeros(n_box, 6).to(device)
+                        #     unlabel_target_reg[:, 0] = batch_ind
+                        #     unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
+                        #     unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
+                        #                                         h=unlabel_imgs_weak_aug.size()[3])
+                        #     unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
                             # semi_label_items += n_box
                        
                         semi_label_items += unlabel_targets_merge_reg.shape[0] + unlabel_targets_merge_cls.shape[0]
 
-                        if (i < 3 or i % round(nb/3) == 0):
-                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_red.jpg"
+                        if i < 3 or (i % round(nb/3) == 0):
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_reg.jpg"
                             Thread(
                                 target=plot_images,
-                                args=(unlabel_imgs_weak_aug, unlabel_targets_merge_reg, None, f),
+                                args=(unlabel_imgs_weak_aug, unlabel_targets , None, f),
+                                kwargs = {"predictions":unlabel_targets_merge_reg},
                                 daemon=True,
                             ).start()
                             f =  save_dir / f"train_epoch_{epoch}_batch_{i}_psuedo_label_cls.jpg"
                             Thread(
                                 target=plot_images,
-                                args=(unlabel_imgs_weak_aug, unlabel_targets_merge_cls, None, f),
+                                args=(unlabel_imgs_weak_aug,unlabel_targets, None, f),
+                                kwargs = {"predictions":unlabel_targets_merge_cls},
                                 daemon=True,
                             ).start()
-                            f = save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_strong.jpg"
-                            Thread(
-                                target=plot_images,
-                                args=(unlabel_imgs_strong_aug, unlabel_targets, None, f),
-                                daemon=True,
-                            ).start()
+                            # f = save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_strong.jpg"
+                            # Thread(
+                            #     target=plot_images,
+                            #     args=(unlabel_imgs_strong_aug, unlabel_targets, None, f),
+                            #     daemon=True,
+                            # ).start()
+                        unlabel_targets_merge_reg = unlabel_targets_merge_reg[:,:6]
+                        unlabel_targets_merge_cls = unlabel_targets_merge_cls[:,:6]
                     except Exception as e:
                         print(e)
                         print(traceback.format_exc())
@@ -582,8 +599,6 @@ def train(hyp, opt, device, tb_writer=None):
                 2.2
                 loss_semi= student.forward_loss(unlabel_imgs_strong, pseudo_unlabel_targets)
                 '''
-               
-
                
                 label_imgs = label_imgs_weak_aug  if i % 2 == 0 else label_imgs_strong_aug
                 Bl=label_imgs.size()[0]
@@ -652,7 +667,7 @@ def train(hyp, opt, device, tb_writer=None):
 
 
 
-            if rank in [-1, 0] and i % round(nb/20) == 0:
+            if rank in [-1, 0] and i % round(nb/10) == 0:
            
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
                 if epoch < hyp["supervised_epoch"]:
@@ -667,7 +682,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                 imgsz=imgsz_test,
                                                 model=val_model,#ema.ema,
                                                 single_cls=opt.single_cls,
-                                                dataloader=testloader,
+                                                dataloader=valloader,
                                                 save_dir=save_dir,
                                                 verbose=nc < 50 and final_epoch,
                                                 plots=False,
@@ -676,9 +691,6 @@ def train(hyp, opt, device, tb_writer=None):
                                                 is_coco=is_coco,
                                                 v5_metric=opt.v5_metric, epoch=epoch)
                 with open(results_file, 'a') as f:
-                    f.write('%10s' * 13 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_obj', 'semi_cls','semi_box', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres') \
-                            + '%10s' * 7 % ('Precision', 'Recall', 'mAP50', 'mAP50:95', 'loss_bbox', 'loss_obj', 'loss_cls'))
-                    f.write('\n')
                     f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
                 # Log
                 tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/total_loss',  # train loss
@@ -691,21 +703,33 @@ def train(hyp, opt, device, tb_writer=None):
                         wandb_logger.log({tag: x})  # W&B
                 wandb_logger.end_iter()
 
+               
+                fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+                
+                # Save model
                 ckpt = {'epoch': epoch,
                         'best_fitness': best_fitness,
-                        'training_results': open(results_file, 'r').readlines()[-1].strip(),
+                        'training_results':  open(results_file, 'r').readlines()[-1].strip(),
                         'model_teacher': deepcopy(model_teacher.module if is_parallel(model_teacher) else model_teacher).half(),
                         'model': deepcopy(model.module if is_parallel(model) else model).half(),
                         'ema': deepcopy(ema.ema).half(),
                         'updates': ema.updates,
                         'optimizer': optimizer.state_dict(),
                         'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
-                fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+
+
+                # Save last, best and delete
+                torch.save(ckpt, last)
                 if fi > best_fitness:
                     best_fitness = fi
-                torch.save(ckpt, last)
-                if best_fitness == fi:
-                    torch.save(ckpt, best)
+                    torch.save(ckpt, best)    
+                if ((epoch+1) % 1) == 0:
+                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
+                if wandb_logger.wandb:
+                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                        wandb_logger.log_model(
+                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                del ckpt
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
 
@@ -743,7 +767,7 @@ def train(hyp, opt, device, tb_writer=None):
             # Write
             with open(results_file, 'a') as f:
                 f.write('%10s' * 13 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_obj', 'semi_cls','semi_box', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres') \
-                            + '%10s' * 7 % ('Precision', 'Recall', 'mAP50', 'mAP50:95', 'loss_bbox', 'loss_obj', 'loss_cls') + '\n')
+                            + '%10s' * 7 % ('Test/Precision', 'Test/Recall', 'Test/mAP50', 'Test/mAP50:95', 'loss_bbox', 'loss_obj', 'loss_cls') + '\n')
                 f.write('\n')
                 f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
             if len(opt.name) and opt.bucket:
@@ -752,7 +776,7 @@ def train(hyp, opt, device, tb_writer=None):
             # Log
             tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/total_loss',  # train loss
                     'train/semi_obj_loss', 'train/semi_cls_loss', 'train/semi_box_los',
-                    'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
+                    'metrics_test/precision', 'metrics_test/recall', 'metrics_test/mAP_0.5', 'metrics_test/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres']  # params
             for x, tag in zip(list(mloss) + list(mloss_semi) + list(results) + lr +[label_targets.shape[0]] + [semi_label_items], tags):
@@ -761,36 +785,8 @@ def train(hyp, opt, device, tb_writer=None):
                 if wandb_logger.wandb:
                     wandb_logger.log({tag: x})  # W&B
 
-            # Update best mAP
-            fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-            if fi > best_fitness:
-                best_fitness = fi
-            wandb_logger.end_epoch(best_result=best_fitness == fi)
 
-            # Save model
-            if True:  # if save
-                ckpt = {'epoch': epoch,
-                        'best_fitness': best_fitness,
-                        'training_results':  open(results_file, 'r').readlines()[-1].strip(),
-                        'model_teacher': deepcopy(model_teacher.module if is_parallel(model_teacher) else model_teacher).half(),
-                        'model': deepcopy(model.module if is_parallel(model) else model).half(),
-                        'ema': deepcopy(ema.ema).half(),
-                        'updates': ema.updates,
-                        'optimizer': optimizer.state_dict(),
-                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
-
-
-                # Save last, best and delete
-                torch.save(ckpt, last)
-                if best_fitness == fi:
-                    torch.save(ckpt, best)
-                if ((epoch+1) % 1) == 0:
-                    torch.save(ckpt, wdir / 'epoch_{:03d}.pt'.format(epoch))
-                if wandb_logger.wandb:
-                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                        wandb_logger.log_model(
-                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                del ckpt
+            
     
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training

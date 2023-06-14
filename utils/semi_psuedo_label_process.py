@@ -1,9 +1,10 @@
 import os
 import time
 import torch
+import copy
 import torchvision
 from .general import *
-
+import copy
 
 def non_max_suppression_pseudo_decouple_multi_view(
     prediction,
@@ -17,6 +18,7 @@ def non_max_suppression_pseudo_decouple_multi_view(
     max_det=300,
     multi_view_thres=0.2,
     multi_view_iou_thres=0.7,
+    certain_conf_thres = 0.4,
 ):
     """Runs Non-Maximum Suppression (NMS) on inference results
     Returns:
@@ -174,7 +176,34 @@ def non_max_suppression_pseudo_decouple_multi_view(
             print(f"WARNING: NMS time limit {time_limit}s exceeded")
             break  # time limit exceeded
 
-    return output_reg, output_cls
+    
+
+    # certain_cls = []
+    # for tensor in output_reg:
+    #     if tensor.numel() == 0:
+    #         certain_cls.append(torch.zeros((0, 6), device=prediction[0].device))
+    #         continue
+    #     max_conf_index = torch.argmax(tensor[:, 4])
+    #     tensor_with_max_conf = tensor[max_conf_index].unsqueeze(0)
+    #     certain_cls.append(tensor_with_max_conf)
+
+    certain_cls = []
+
+    for tensor in output_reg:
+        if tensor.numel() == 0:
+            certain_cls.append(torch.zeros((0, 6), device=prediction[0].device))
+            continue
+
+        conf_above_thres_mask =  tensor[:, 4] > certain_conf_thres
+
+        if torch.any(conf_above_thres_mask):
+            certain_cls.append(tensor[conf_above_thres_mask])
+        else:
+            max_conf_index = torch.argmax(tensor[:, 4])
+            tensor_with_max_conf = tensor[max_conf_index].unsqueeze(0)
+            certain_cls.append(tensor_with_max_conf)
+
+    return output_reg, certain_cls # output_cls #, certain_reg, certain_cls
 
 
 def non_max_suppression_pseudo_decouple(
@@ -200,7 +229,7 @@ def non_max_suppression_pseudo_decouple(
         labels: a tensor of shape (num_boxes, 6), where each row corresponds to a ground truth bounding box in the format (image_index, class_index, x_center, y_center, width, height). If specified, these labels will be used to perform auto-labeling during NMS.
         max_det: an integer value indicating the maximum number of detections to output per image.
     Returns:
-         list of detections, on (n,6) tensor per image [xyxy, conf, cls]
+        list of detections, on (n,6) tensor per image [xyxy, conf, cls]
     """
 
     nc = prediction.shape[2] - 5  # number of classes
@@ -327,7 +356,10 @@ def non_max_suppression_pseudo_decouple(
             print(f"WARNING: NMS time limit {time_limit}s exceeded")
             break  # time limit exceeded
 
-    return output_reg, output_cls
+    
+
+    return output_reg,  output_cls #, certain_reg, certain_cls
+
 
 
 def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
@@ -350,7 +382,8 @@ def convert_output_to_label(imgs, preds, shapes, conf=False, device=torch.device
     else:
         labels = torch.zeros(0, 6).to(device)
     
-    for i, pred in enumerate(preds):
+    for i, _pred in enumerate(preds):
+        pred = copy.deepcopy(_pred)
         if conf:
             label = torch.zeros(len(pred), 7).to(device)
         else:

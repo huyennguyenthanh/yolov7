@@ -1,0 +1,28 @@
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all        4254        4214       0.915       0.799       0.874       0.569
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/test
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all        4872        4719       0.841       0.721       0.833       0.456
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-300
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all          60          60       0.964       0.883       0.938       0.588
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ClinicDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all          62          69       0.875       0.609       0.733       0.383
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         380         380       0.923       0.692       0.784       0.448
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/ETIS-LaribPolypDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         196         209       0.701       0.516       0.605       0.236
+/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/last.pt
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/Kvasir
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         100         124       0.739       0.548       0.623       0.325

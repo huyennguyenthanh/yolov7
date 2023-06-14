@@ -112,7 +112,7 @@ def output_to_target(output):
     return np.array(targets)
 
 
-def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16, predictions=None):
+def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max_size=640, max_subplots=16, predictions=None, conf_thres=0.25):
     # Plot image grid with labels
 
     if isinstance(images, torch.Tensor):
@@ -171,7 +171,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 cls = int(classes[j])
                 color = colors[cls % len(colors)]
                 cls = names[cls] if names else cls
-                if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                if labels or conf[j] > conf_thres:  # # 0.25 conf thresh
                     label = '%s' % cls if labels else '%s %.2f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
 
@@ -194,7 +194,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 cls = int(classes[j])
                 color = colors[cls % len(colors) + 1]
                 cls = names[cls] if names else cls
-                if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                if labels or conf[j] > conf_thres:  # 0.25 conf thresh
                     label = '%s' % cls if labels else '%s %.2f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
 

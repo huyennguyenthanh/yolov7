@@ -61,6 +61,10 @@ def test(data,
         model = attempt_load(weights, map_location=device)  # load FP32 model
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
+
+        with open(save_dir / f'results.txt', "a") as f:
+            f.write(weights[0] + "\n")
+        
         
         if trace:
             model = TracedModel(model, device, imgsz)
@@ -219,11 +223,11 @@ def test(data,
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        # if (batch_i % round(len(dataloader)/3) == 0):
-        #     f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_labels.jpg'  # labels
-        #     Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
-        #     f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_pred.jpg'  # predictions
-        #     Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+        if (batch_i % round(len(dataloader)/2) == 0):
+            # f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_labels.jpg'  # labels
+            # Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
+            f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}.jpg'  # predictions
+            Thread(target=plot_images, args=(img, targets, paths, f, names), kwargs = {"predictions": output_to_target(out)}, daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -238,10 +242,11 @@ def test(data,
     # Print results
     pf = '%20s' + '%12i' * 2 + '%12.3g' * 4  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
-    with open(save_dir / f'results.txt', "a") as f:
-        f.write(data[task] + "\n")
-        f.write(s + "\n")
-        f.write(pf % ('all', seen, nt.sum(), mp, mr, map50, map) + "\n")
+    if not training:
+        with open(save_dir / f'results.txt', "a") as f:
+            f.write(data[task] + "\n")
+            f.write(s + "\n")
+            f.write(pf % ('all', seen, nt.sum(), mp, mr, map50, map) + "\n")
 
     # Print results per class
     if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):

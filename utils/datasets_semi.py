@@ -103,6 +103,21 @@ class X10Dataset(torch.utils.data.Dataset):
     def __getattr__(self, name):
         return getattr(self.dataset, name)
     
+
+# 5 percent
+class X20Dataset(torch.utils.data.Dataset):
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset) * 20
+
+    def __getitem__(self, index):
+        return self.dataset[index % len(self.dataset)]
+
+    def __getattr__(self, name):
+        return getattr(self.dataset, name)
+    
 def create_dataloader_label(path,
         imgsz,
         batch_size,
