@@ -40,7 +40,7 @@ def test(data,
          half_precision=True,
          trace=False,
          is_coco=False,
-         v5_metric=False, epoch=0, iter=0):
+         v5_metric=False, epoch=0, iter=0, benchmark=False):
     # Initialize/load model and set device
     training = model is not None
     if training:  # called by train.py
@@ -51,7 +51,10 @@ def test(data,
         device = select_device(opt.device, batch_size=batch_size)
 
         # Directories
-        save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
+        if benchmark:
+            save_dir = Path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)
+        else:
+            save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
@@ -73,6 +76,10 @@ def test(data,
         is_coco = data.endswith('coco.yaml')
         with open(data) as f:
             data = yaml.load(f, Loader=yaml.SafeLoader)
+      
+    elif isinstance(data, dict):
+        is_coco = False
+    
     check_dataset(data)  # check
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
@@ -212,11 +219,11 @@ def test(data,
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if (batch_i % round(len(dataloader)/3) == 0):
-            f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_labels.jpg'  # labels
-            Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
-            f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+        # if (batch_i % round(len(dataloader)/3) == 0):
+        #     f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_labels.jpg'  # labels
+        #     Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
+        #     f = save_dir / f'test_epoch_{epoch}_batch_{batch_i}_pred.jpg'  # predictions
+        #     Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -231,6 +238,10 @@ def test(data,
     # Print results
     pf = '%20s' + '%12i' * 2 + '%12.3g' * 4  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+    with open(save_dir / f'results.txt', "a") as f:
+        f.write(data[task] + "\n")
+        f.write(s + "\n")
+        f.write(pf % ('all', seen, nt.sum(), mp, mr, map50, map) + "\n")
 
     # Print results per class
     if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
@@ -309,13 +320,49 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     parser.add_argument('--v5-metric', action='store_true', help='assume maximum recall as 1.0 in AP calculation')
+    parser.add_argument('--benchmark', action='store_true', help='test benchmark')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
     print(opt)
     #check_requirements()
 
-    if opt.task in ('train', 'val', 'test'):  # run normally
+    if opt.benchmark:
+        benchmark_list = [
+            "/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid",
+            "/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/test",
+            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-300",
+            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ClinicDB",
+            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB",
+            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/ETIS-LaribPolypDB",
+            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/Kvasir"
+
+        ]
+        with open(opt.data) as f:
+            data = yaml.load(f, Loader=yaml.SafeLoader)
+        for benchmark in benchmark_list:
+            data["test"] = benchmark
+            print(data["test"])
+            opt.task = "test"
+            test(data,
+                opt.weights,
+                opt.batch_size,
+                opt.img_size,
+                opt.conf_thres,
+                opt.iou_thres,
+                opt.save_json,
+                opt.single_cls,
+                opt.augment,
+                opt.verbose,
+                save_txt=opt.save_txt | opt.save_hybrid,
+                save_hybrid=opt.save_hybrid,
+                save_conf=opt.save_conf,
+                trace=not opt.no_trace,
+                v5_metric=opt.v5_metric,
+                benchmark=True
+                )
+
+    elif opt.task in ('train', 'val', 'test'):  # run normally
         test(opt.data,
              opt.weights,
              opt.batch_size,
@@ -351,3 +398,4 @@ if __name__ == '__main__':
             np.savetxt(f, y, fmt='%10.4g')  # save
         os.system('zip -r study.zip study_*.txt')
         plot_study_txt(x=x)  # plot
+    

@@ -1,0 +1,21 @@
+/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all        4254        4214       0.899       0.777        0.87       0.586
+/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/test
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all        4872        4719       0.805       0.676       0.784       0.489
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-300
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all          60          60       0.931         0.9       0.932       0.613
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ClinicDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all          62          69       0.714       0.725       0.759       0.452
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         380         380       0.772       0.642       0.734       0.407
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/ETIS-LaribPolypDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         196         209       0.695       0.588       0.621       0.371
+/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/Kvasir
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         100         124       0.675       0.621       0.655       0.414

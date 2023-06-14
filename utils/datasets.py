@@ -379,7 +379,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 for p in path if isinstance(path, list) else [path]:
                     p = Path(p)  # os-agnostic
                     if p.is_dir():  # dir
-                        f += glob.glob(str(p / '**' / '*.*'), recursive=True)
+                        f += glob.glob(str(p / 'images' / '*.*'), recursive=True)
                         # f = list(p.rglob('**/*.*'))  # pathlib
                     elif p.is_file():  # file
                         with open(p, 'r') as t:
@@ -429,9 +429,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.shapes = np.array(shapes, dtype=np.float64)
         self.img_files = list(cache.keys())  # update
         self.label_files = img2label_paths(cache.keys())  # update
-        if single_cls:
-            for x in self.labels:
-                x[:, 0] = 0
+        # if single_cls:
+        for x in self.labels:
+            x[:, 0] = 0
 
         n = len(shapes)  # number of images
         bi = np.floor(np.arange(n) / batch_size).astype(int)  # batch index
