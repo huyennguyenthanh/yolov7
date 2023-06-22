@@ -248,7 +248,7 @@ def attempt_load(weights, map_location=None, model_teacher=False):
     # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:
-        attempt_download(w)
+        # attempt_download(w)
         ckpt = torch.load(w, map_location=map_location)  # load
         if model_teacher:
             with torch.no_grad():

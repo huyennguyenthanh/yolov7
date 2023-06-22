@@ -87,7 +87,7 @@ def train(hyp, opt, device, tb_writer=None):
     # Model
     pretrained = weights.endswith('.pt')
     if True:
-        weights = "/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_2_percent_10_multi_view/weights/epoch_003.pt"
+        weights = "/home/nguyen.thanh.huyenb/yolov7/YOLOv7/fold_4_percent_10_semi_multi_view/weights/epoch_002.pt"
         # with torch_distributed_zero_first(rank):
         #     attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
@@ -400,9 +400,9 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
-        if not epoch <= hyp["supervised_epoch"] and (epoch - hyp["supervised_epoch"]) % 4 == 0:
+        if not epoch <= hyp["supervised_epoch"] and (epoch - hyp["supervised_epoch"]) % 3 == 0:
             bbox_threshold -= 0.05
-            cls_threshold += 0.1
+            cls_threshold += 0.05
         for i, data in pbar:  # batch -------------------------------------------------------------
             
             semi_label_items = torch.zeros(1, device=device)
@@ -540,9 +540,9 @@ def train(hyp, opt, device, tb_writer=None):
                        
                         # unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
                         
-                        pseudo_boxes_reg,pseudo_boxes_cls = non_max_suppression_pseudo_decouple_multi_view(out,iou_thres=bbox_threshold, cls_thres=0, conf_thres=cls_threshold)
-                        unlabel_targets_merge_reg = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), pseudo_boxes_reg, unlabel_shapes, conf=True).to(device)
-                        unlabel_targets_merge_cls = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), pseudo_boxes_cls, unlabel_shapes, conf=True).to(device)
+                        soft_pseudo_label,hard_pseudo_label = non_max_suppression_pseudo_decouple_multi_view(out,iou_thres=bbox_threshold, cls_thres=0, conf_thres=cls_threshold)
+                        unlabel_targets_hard = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), hard_pseudo_label, unlabel_shapes, conf=True).to(device)
+                        unlabel_targets_soft = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), soft_pseudo_label, unlabel_shapes, conf=True).to(device)
                         # unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
                         # unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
                         # for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
@@ -566,31 +566,25 @@ def train(hyp, opt, device, tb_writer=None):
                         #     unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
                             # semi_label_items += n_box
                        
-                        semi_label_items += unlabel_targets_merge_reg.shape[0] + unlabel_targets_merge_cls.shape[0]
+                        semi_label_items += unlabel_targets_hard.shape[0] + unlabel_targets_soft.shape[0]
 
-                        if i < 3 or (i % round(nb/3) == 0):
-                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_reg.jpg"
+                        if (i % round(nb/5) == 0):
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_hard.jpg"
                             Thread(
                                 target=plot_images,
                                 args=(unlabel_imgs_weak_aug, unlabel_targets , None, f),
-                                kwargs = {"predictions":unlabel_targets_merge_reg},
+                                kwargs = {"predictions":unlabel_targets_hard, "conf_thres": 0.0},
                                 daemon=True,
                             ).start()
-                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_psuedo_label_cls.jpg"
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_psuedo_label_soft.jpg"
                             Thread(
                                 target=plot_images,
                                 args=(unlabel_imgs_weak_aug,unlabel_targets, None, f),
-                                kwargs = {"predictions":unlabel_targets_merge_cls},
+                                kwargs = {"predictions":unlabel_targets_soft, "conf_thres": 0.0},
                                 daemon=True,
                             ).start()
-                            # f = save_dir / f"train_epoch_{epoch}_batch_{i}_unlabel_strong.jpg"
-                            # Thread(
-                            #     target=plot_images,
-                            #     args=(unlabel_imgs_strong_aug, unlabel_targets, None, f),
-                            #     daemon=True,
-                            # ).start()
-                        unlabel_targets_merge_reg = unlabel_targets_merge_reg[:,:6]
-                        unlabel_targets_merge_cls = unlabel_targets_merge_cls[:,:6]
+                        unlabel_targets_hard = unlabel_targets_hard[:,:6]
+                        unlabel_targets_soft = unlabel_targets_soft[:,:6]
                     except Exception as e:
                         print(e)
                         print(traceback.format_exc())
@@ -613,12 +607,11 @@ def train(hyp, opt, device, tb_writer=None):
                     
                         loss, loss_items = compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
                         #pay attention: ignoring the regression term
-                        semi_loss_cls, semi_loss_items_cls = compute_loss_semi(semi_pred, unlabel_targets_merge_cls.to(device), unlabel_imgs_strong_aug, obj_only=True)  # loss scaled by batch_size
-                        semi_loss_reg, semi_loss_items_reg = compute_loss_semi(semi_pred, unlabel_targets_merge_reg.to(device), unlabel_imgs_strong_aug, bbox_only=True)  # loss scaled by batch_size
-                        semi_loss = semi_loss_cls + semi_loss_reg
+                        semi_loss_hard, semi_loss_items_hard = compute_loss_semi(semi_pred, unlabel_targets_hard.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                        semi_loss_soft, semi_loss_items_soft = compute_loss_semi(semi_pred, unlabel_targets_soft.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                        semi_loss = 4 * semi_loss_hard + semi_loss_soft
                         # semi_loss, semi_loss_items = compute_loss_semi(semi_pred, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
-
-                        semi_loss_items = 10 * semi_loss_items_cls + semi_loss_items_reg
+                        semi_loss_items = 4 * semi_loss_items_hard + semi_loss_items_soft
                         # print(semi_loss_items)
                         if rank != -1:
                             semi_loss *= opt.world_size  # gradient averaged between devices in DDP mode

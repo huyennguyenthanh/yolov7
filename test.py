@@ -58,7 +58,7 @@ def test(data,
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        model = attempt_load(weights, map_location=device)  # load FP32 model
+        model = attempt_load(weights, map_location=device, model_teacher=False)  # load FP32 model
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
 
@@ -334,13 +334,13 @@ if __name__ == '__main__':
 
     if opt.benchmark:
         benchmark_list = [
-            "/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid",
-            "/mnt/disk1/nguyen.thanh.huyenb/PolypsSet/PolypsSet/test",
-            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-300",
-            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ClinicDB",
-            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB",
-            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/ETIS-LaribPolypDB",
-            "/mnt/disk1/nguyen.thanh.huyenb/polyp_dataset/TestDataset/Kvasir"
+            "/home/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid",
+            "/home/nguyen.thanh.huyenb/PolypsSet/PolypsSet/test",
+            "/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-300",
+            "/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ClinicDB",
+            "/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB",
+            "/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/ETIS-LaribPolypDB",
+            "/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/Kvasir"
 
         ]
         with open(opt.data) as f:

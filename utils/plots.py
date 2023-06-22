@@ -4,7 +4,7 @@ import glob
 import math
 import os
 import random
-from copy import copy
+from copy import copy, deepcopy
 from pathlib import Path
 
 import cv2
@@ -140,6 +140,8 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
 
     colors = color_list()  # list of colors
     mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
+    predictions = deepcopy(predictions)
+    targets = deepcopy(targets)
     for i, img in enumerate(images):
         if i == max_subplots:  # if last batch has fewer images than we expect
             break
