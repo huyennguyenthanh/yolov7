@@ -7,7 +7,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 from threading import Thread
-
+import json
 import numpy as np
 import torch.distributed as dist
 import torch.nn as nn
@@ -49,6 +49,7 @@ def train(hyp, opt, device, tb_writer=None):
     last = wdir / 'last.pt'
     best = wdir / 'best.pt'
     results_file = save_dir / 'results.txt'
+    time_file = save_dir / 'time.json'
 
     # Save run settings
     with open(save_dir / 'hyp.yaml', 'w') as f:
@@ -305,8 +306,25 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
     torch.save(model, wdir / 'init.pt')
+    time_dict = {
+        "epoch" : 0,
+        "i": 0,
+        "load_data": 0.,
+        "train_on_batch_supervised_foward": 0.,
+        "train_on_batch_supervised_loss": 0,
+        "update_teacher": 0,
+        "predict_pseudo_label": 0,
+        "predict_pseudo_label_filter": 0,
+        "train_on_batch_semi_foward": 0,
+        "train_on_batch_semi_loss": 0,
+        "loss_backward":0,
+        "optimizer":0,
+        "evaluate":0,
+        "scheduler":0
+    }
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
+        time_dict["epoch"] = epoch
 
         # Update image weights (optional)
         if opt.image_weights:
@@ -335,6 +353,8 @@ def train(hyp, opt, device, tb_writer=None):
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
+            time_dict["i"] = i
+            start = time.time()
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
@@ -360,6 +380,8 @@ def train(hyp, opt, device, tb_writer=None):
             # Forward
             with amp.autocast(enabled=cuda):
                 pred = model(imgs)  # forward
+                time_dict["train_on_batch_supervised_foward"] = time.time() - start
+                start = time.time()
                 if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
                     loss, loss_items = compute_loss_ota(pred, targets.to(device), imgs)  # loss scaled by batch_size
                 else:
@@ -368,9 +390,13 @@ def train(hyp, opt, device, tb_writer=None):
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
                     loss *= 4.
+                time_dict["train_on_batch_supervised_loss"] = time.time() - start
+                start = time.time()
 
             # Backward
             scaler.scale(loss).backward()
+            time_dict["loss_backward"] = time.time() - start
+            start = time.time()
 
             # Optimize
             if ni % accumulate == 0:
@@ -379,7 +405,11 @@ def train(hyp, opt, device, tb_writer=None):
                 optimizer.zero_grad()
                 if ema:
                     ema.update(model)
+            time_dict["optimizer"] = time.time() - start
+            start = time.time()
 
+            if i % 50 == 0:
+                json.dump(json.load(open(time_file, "r")) + [time_dict] if os.path.exists(time_file) else [time_dict], open(time_file, 'w'))
             # Print
             if rank in [-1, 0]:
                 mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
@@ -405,6 +435,10 @@ def train(hyp, opt, device, tb_writer=None):
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
         scheduler.step()
+        time_dict["scheduler"] = time.time() - start
+        start = time.time()
+
+
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0]:
@@ -478,6 +512,8 @@ def train(hyp, opt, device, tb_writer=None):
                         wandb_logger.log_model(
                             last.parent, opt, epoch, fi, best_model=best_fitness == fi)
                 del ckpt
+            time_dict["evaluate"] = time.time() - start
+            start = time.time()
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training

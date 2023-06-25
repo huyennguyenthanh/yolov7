@@ -91,26 +91,12 @@ def create_dataloader_semi(
 #     return data_loader
 
 class X10Dataset(torch.utils.data.Dataset):
-    def __init__(self, dataset):
+    def __init__(self, dataset, percent=10):
         self.dataset = dataset
+        self.percent = int(100/percent) - 1
 
     def __len__(self):
-        return len(self.dataset) * 10
-
-    def __getitem__(self, index):
-        return self.dataset[index % len(self.dataset)]
-
-    def __getattr__(self, name):
-        return getattr(self.dataset, name)
-    
-
-# 5 percent
-class X20Dataset(torch.utils.data.Dataset):
-    def __init__(self, dataset):
-        self.dataset = dataset
-
-    def __len__(self):
-        return len(self.dataset) * 20
+        return len(self.dataset) * self.percent
 
     def __getitem__(self, index):
         return self.dataset[index % len(self.dataset)]
@@ -159,7 +145,7 @@ def create_dataloader_label(path,
 
     # # Concatenate the datasets
     # dataset = ConcatDataset(datasets)
-    dataset = X10Dataset(dataset)
+    dataset = X10Dataset(dataset, percent=10)
     batch_size = min(batch_size, len(dataset))
     nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
     sampler = (

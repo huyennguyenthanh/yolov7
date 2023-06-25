@@ -140,7 +140,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
 
     colors = color_list()  # list of colors
     mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)  # init
-    predictions = deepcopy(predictions)
+    predictions = copy(predictions)
     targets = deepcopy(targets)
     for i, img in enumerate(images):
         if i == max_subplots:  # if last batch has fewer images than we expect
@@ -176,29 +176,32 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
                 if labels or conf[j] > conf_thres:  # # 0.25 conf thresh
                     label = '%s' % cls if labels else '%s %.2f' % (cls, conf[j])
                     plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+        try:
+            if predictions is not None:
+                image_targets = predictions[predictions[:, 0] == i]
+                
+                boxes = xywh2xyxy(deepcopy(image_targets[:, 2:6])).T
+                classes = image_targets[:, 1].astype('int')
+                labels = image_targets.shape[1] == 6  # labels if no conf column
+                conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
 
-        if predictions is not None:
-            image_targets = predictions[predictions[:, 0] == i]
-            boxes = xywh2xyxy(image_targets[:, 2:6]).T
-            classes = image_targets[:, 1].astype('int')
-            labels = image_targets.shape[1] == 6  # labels if no conf column
-            conf = None if labels else image_targets[:, 6]  # check for confidence presence (label vs pred)
-
-            if boxes.shape[1]:
-                if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
-                    boxes[[0, 2]] *= w  # scale to pixels
-                    boxes[[1, 3]] *= h
-                elif scale_factor < 1:  # absolute coords need scale if image scales
-                    boxes *= scale_factor
-            boxes[[0, 2]] += block_x
-            boxes[[1, 3]] += block_y
-            for j, box in enumerate(boxes.T):
-                cls = int(classes[j])
-                color = colors[cls % len(colors) + 1]
-                cls = names[cls] if names else cls
-                if labels or conf[j] > conf_thres:  # 0.25 conf thresh
-                    label = '%s' % cls if labels else '%s %.2f' % (cls, conf[j])
-                    plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+                if boxes.shape[1]:
+                    if boxes.max() <= 1.01:  # if normalized with tolerance 0.01
+                        boxes[[0, 2]] *= w  # scale to pixels
+                        boxes[[1, 3]] *= h
+                    elif scale_factor < 1:  # absolute coords need scale if image scales
+                        boxes *= scale_factor
+                boxes[[0, 2]] += block_x
+                boxes[[1, 3]] += block_y
+                for j, box in enumerate(boxes.T):
+                    cls = int(classes[j])
+                    color = colors[cls % len(colors) + 1]
+                    cls = names[cls] if names else cls
+                    if labels or conf[j] > conf_thres:  # 0.25 conf thresh
+                        label = '%s' % cls if labels else '%s %.2f' % (cls, conf[j])
+                        plot_one_box(box, mosaic, label=label, color=color, line_thickness=tl)
+        except Exception as e:
+            print(e)
 
 
         # Draw image filename labels

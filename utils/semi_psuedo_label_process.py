@@ -400,6 +400,33 @@ def convert_output_to_label(imgs, preds, shapes, conf=False, device=torch.device
 
     return labels
 
+
+def convert_output_to_label_2(imgs, preds, shapes=None, conf=False, device=torch.device('cuda:0')):
+    if conf:
+        unlabel_targets_merge = torch.zeros(0, 7).to(device)
+    else:
+        unlabel_targets_merge = torch.zeros(0, 6).to(device)
+
+    semi_label_items = torch.zeros(1, device=device)
+    for batch_ind, pseudo_box in enumerate(preds):
+        # two stage filters
+        n_box = pseudo_box.size()[0]
+        if conf:
+            unlabel_target = torch.zeros(n_box, 7).to(device)
+        else:
+            unlabel_target = torch.zeros(n_box, 6).to(device)
+        unlabel_target[:, 0] = batch_ind
+        unlabel_target[:, 1] = pseudo_box[:, -1]
+        unlabel_target[:, 2:6] = xyxy2xywhn(pseudo_box[:, 0:4], w=imgs.size()[2],
+                                            h=imgs.size()[3])
+        if conf:
+            unlabel_target[:, 6] = pseudo_box[:, 4]
+        unlabel_targets_merge = torch.cat([unlabel_targets_merge, unlabel_target])
+
+        semi_label_items += n_box
+    
+    return unlabel_targets_merge
+                       
 def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
                         labels=()):
     """Runs Non-Maximum Suppression (NMS) on inference results

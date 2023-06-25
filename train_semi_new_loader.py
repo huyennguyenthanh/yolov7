@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from threading import Thread
 import traceback
+import json
 
 import numpy as np
 import torch.distributed as dist
@@ -34,9 +35,9 @@ from utils.general import labels_to_class_weights, increment_path, labels_to_ima
 from utils.google_utils import attempt_download
 # from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.loss import ComputeLoss, ComputeLossOTA
-from utils.loss_semi import ComputeLossOTASemi
+from utils.loss_semi import ComputeLossOTASemi, ComputeLossSemi
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
-from utils.semi_psuedo_label_process import convert_output_to_label, non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
+from utils.semi_psuedo_label_process import convert_output_to_label, convert_output_to_label_2, non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
 from utils.torch_utils import ModelEMA, _update_teacher_model, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
@@ -54,6 +55,7 @@ def train(hyp, opt, device, tb_writer=None):
     last = wdir / 'last.pt'
     best = wdir / 'best.pt'
     results_file = save_dir / 'results.txt'
+    time_file = save_dir / 'time.json'
 
     # Save run settings
     with open(save_dir / 'hyp.yaml', 'w') as f:
@@ -86,27 +88,26 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    if True:
-        weights = "/home/nguyen.thanh.huyenb/yolov7/YOLOv7/fold_4_percent_10_semi_multi_view/weights/epoch_002.pt"
+    if pretrained:
         # with torch_distributed_zero_first(rank):
         #     attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         model_teacher = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
-        exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
-        state_dict = ckpt['model'].float().state_dict()  # to FP32
-        state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
-        model.load_state_dict(state_dict, strict=False)  # load
+        # exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
+        # state_dict = ckpt['model'].float().state_dict()  # to FP32
+        # state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
+        # model.load_state_dict(state_dict, strict=False)  # load
 
 
-        csd_t = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
-        csd_t = intersect_dicts(csd_t, model_teacher.state_dict(), exclude=exclude)  # intersec
-        model_teacher.load_state_dict(csd_t, strict=False)  # load
-        # model = attempt_load(weights, map_location=device) 
-        # model_teacher = attempt_load(weights, map_location=device) 
+        # csd_t = ckpt['model'].float().state_dict()  # checkpoint state_dict as FP32
+        # csd_t = intersect_dicts(csd_t, model_teacher.state_dict(), exclude=exclude)  # intersec
+        # model_teacher.load_state_dict(csd_t, strict=False)  # load
+        model = attempt_load(weights, map_location=device) 
+        model_teacher = attempt_load(weights, map_location=device, model_teacher=True) 
       
-        logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
-        logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model_teacher.state_dict()), weights))  # report
+        # logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
+        # logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model_teacher.state_dict()), weights))  # report
     else:
         model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         model_teacher=Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)
@@ -222,32 +223,32 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Resume
     start_epoch, best_fitness = 0, 0.0
-    # if pretrained:
-    #     # Optimizer
-    #     if ckpt['optimizer'] is not None:
-    #         optimizer.load_state_dict(ckpt['optimizer'])
-    #         best_fitness = ckpt['best_fitness']
+    if pretrained:
+        # Optimizer
+        if ckpt['optimizer'] is not None:
+            optimizer.load_state_dict(ckpt['optimizer'])
+            best_fitness = ckpt['best_fitness']
 
-    #     # EMA
-    #     if ema and ckpt.get('ema'):
-    #         ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
-    #         ema.updates = ckpt['updates']
+        # EMA
+        if ema and ckpt.get('ema'):
+            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+            ema.updates = ckpt['updates']
 
-    #     # Results
-    #     if ckpt.get('training_results') is not None:
-    #         results_file.write_text(ckpt['training_results'])  # write results.txt
+        # Results
+        if ckpt.get('training_results') is not None:
+            results_file.write_text(ckpt['training_results'])  # write results.txt
 
-    #     # Epochs
-    #     start_epoch = ckpt['epoch'] + 1
+        # Epochs
+        start_epoch = ckpt['epoch'] + 1
    
-    #     # if opt.resume:
-    #     #     assert start_epoch > 0, '%s training to %g epochs is finished, nothing to resume.' % (weights, epochs)
-    #     if epochs < start_epoch:
-    #         logger.info('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
-    #                     (weights, ckpt['epoch'], epochs))
-    #         epochs += ckpt['epoch']  # finetune additional epochs
+        # if opt.resume:
+        #     assert start_epoch > 0, '%s training to %g epochs is finished, nothing to resume.' % (weights, epochs)
+        if epochs < start_epoch:
+            logger.info('%s has been trained for %g epochs. Fine-tuning for %g additional epochs.' %
+                        (weights, ckpt['epoch'], epochs))
+            epochs += ckpt['epoch']  # finetune additional epochs
 
-    #     del ckpt, state_dict
+        del ckpt, state_dict
 
     # Image sizes
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
@@ -268,24 +269,19 @@ def train(hyp, opt, device, tb_writer=None):
                                             hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
                                             image_weights=opt.image_weights, quad=opt.quad, mosaic=True, prefix=colorstr('train: '))
+    hyp["mosaic"] = 0.4
+    hyp["mixup"] = 0.
     train_unlabel_loader, dataset_unlabel = create_dataloader_semi(unlabel_path, imgsz, batch_size,
                                                                    gs, opt,
                                                                    hyp=hyp, augment=False, cache=opt.cache_images,
                                                                    rect=opt.rect, rank=rank,  world_size=opt.world_size,
                                                                    workers=opt.workers, image_weights=opt.image_weights,
-                                                                   quad=opt.quad,
+                                                                   quad=opt.quad, mosaic=True,
                                                                    prefix=colorstr('train: '))
-    # mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
-    # nb = len(dataloader)  # number of batches
-    # mlc = int(np.concatenate(dataset_label.labels, 0)[:,0].max())  
-    #max(int(np.concatenate(dataset_label.labels, 0)[:, 0].max()),int(np.concatenate(dataset_unlabel.labels, 0)[:, 0].max()) ) # max label class
+    mlc = int(np.concatenate(dataset_label.labels, 0)[:,0].max())  
     print(f"Len label dataset: {dataset_label.__len__()} - Len unlabel dataset: {dataset_unlabel.__len__()}")
     nb = max(len(train_label_loader),len(train_unlabel_loader) ) # number of batches
-
-
-    # dataloader = create_dataloader_combine(dataset_label,dataset_unlabel, batch_size )
-    # nb = len(dataloader)
-    # assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, opt.data, nc - 1)
+    assert mlc < nc, 'Label class %g exceeds nc=%g in %s. Possible class labels are 0-%g' % (mlc, nc, opt.data, nc - 1)
 
     # Process 0
     if rank in [-1, 0]:
@@ -342,7 +338,8 @@ def train(hyp, opt, device, tb_writer=None):
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss_ota = ComputeLossOTA(model)  # init loss class
     compute_loss = ComputeLoss(model)  # init loss class
-    compute_loss_semi = ComputeLossOTASemi(model)
+    compute_loss_semi = ComputeLossSemi(model)
+    compute_loss_ota_semi = ComputeLossOTASemi(model)
 
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {train_label_loader.num_workers} dataloader workers\n'
@@ -352,9 +349,25 @@ def train(hyp, opt, device, tb_writer=None):
 
     bbox_threshold = hyp['bbox_threshold']
     cls_threshold = hyp['cls_threshold']
+    time_dict = {
+        "epoch" : 0,
+        "i": 0,
+        "load_data": 0.,
+        "train_on_batch_supervised_foward": 0.,
+        "train_on_batch_supervised_loss": 0,
+        "update_teacher": 0,
+        "predict_pseudo_label": 0,
+        "predict_pseudo_label_filter": 0,
+        "train_on_batch_semi_foward": 0,
+        "train_on_batch_semi_loss": 0,
+        "loss_backward":0,
+        "optimizer":0,
+        "evaluate":0,
+        "scheduler":0
+    }
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
-
+        time_dict["epoch"] = epoch
      
         # Update image weights (optional)
         if opt.image_weights:
@@ -384,13 +397,9 @@ def train(hyp, opt, device, tb_writer=None):
             train_unlabel_loader.sampler.set_epoch(epoch)
             train_label_loader.set_length(max(len(train_label_loader),len(train_unlabel_loader)))
             train_unlabel_loader.set_length(max(len(train_label_loader),len(train_unlabel_loader)))
-        # pbar = enumerate(zip(train_label_loader,train_unlabel_loader))
-        # pbar = enumerate(dataloader)
+
         pbar = enumerate(zip(train_label_loader,train_unlabel_loader))
 
-
-
-        # logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
         logger.info(('\n' + '%10s' * 13) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_obj', 'semi_cls','semi_box', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres'))
         with open(results_file, 'a') as f:
             f.write('%10s' * 13 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_obj', 'semi_cls','semi_box', 'labels', 'semi_labels', 'cls_thres', 'bbox_thres') \
@@ -400,11 +409,12 @@ def train(hyp, opt, device, tb_writer=None):
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
         optimizer.zero_grad()
-        if not epoch <= hyp["supervised_epoch"] and (epoch - hyp["supervised_epoch"]) % 3 == 0:
-            bbox_threshold -= 0.05
-            cls_threshold += 0.05
+        if not epoch <= hyp["supervised_epoch"]:
+            bbox_threshold = max(0.5,bbox_threshold - 0.05)
+            cls_threshold = min(0.4, cls_threshold + 0.1)
         for i, data in pbar:  # batch -------------------------------------------------------------
-            
+            time_dict["i"] = i
+            start = time.time()
             semi_label_items = torch.zeros(1, device=device)
             (label_imgs, label_targets, label_paths, label_shapes), (
                 unlabel_imgs, unlabel_targets, unlabel_paths, unlabel_shapes) = data
@@ -438,7 +448,8 @@ def train(hyp, opt, device, tb_writer=None):
             label_targets=label_targets.to(device, non_blocking=True)
             unlabel_targets = unlabel_targets.to(device, non_blocking=True)
         
-            
+            time_dict["load_data"] = time.time() - start
+            start = time.time()
             
             
             
@@ -473,7 +484,6 @@ def train(hyp, opt, device, tb_writer=None):
             # Forward
 
             label_imgs=torch.cat([label_imgs_weak_aug,label_imgs_strong_aug],0)
-          
             semi_loss = torch.zeros(1, requires_grad=True, device=device)
 
             if epoch < hyp["supervised_epoch"]:
@@ -488,10 +498,17 @@ def train(hyp, opt, device, tb_writer=None):
                 label_targets=torch.cat([label_targets,label_targets_strong],0)
                 with amp.autocast(enabled=cuda):
                     pred = model(label_imgs)  # forward
-                    if 'loss_ota' not in hyp or hyp['loss_ota'] == 1:
+                    time_dict["train_on_batch_supervised_foward"] = time.time() - start
+                    start = time.time()
+            
+                    if hyp['loss_ota'] == 1:
                         loss, loss_items = compute_loss_ota(pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
                     else:
                         loss, loss_items = compute_loss(pred, label_targets.to(device))  # loss scaled by batch_size
+                    
+                    time_dict["train_on_batch_supervised_loss"] = time.time() - start
+                    start = time.time()
+            
                     if rank != -1:
                         loss *= opt.world_size  # gradient averaged between devices in DDP mode
                     if opt.quad:
@@ -506,17 +523,16 @@ def train(hyp, opt, device, tb_writer=None):
                 2.0. ema part
                 ema(student,teacher)
                 '''
-                if epoch == hyp["supervised_epoch"]:
-                    if i == 0:
-                        print(f"Iteration {ni} - Epoch{epoch}: Update teacher") 
+                if i == 0 and epoch == hyp["supervised_epoch"]:
+                    print(f"Iteration {ni} - Epoch{epoch}: Update teacher") 
                     _update_teacher_model(model if ema is None else ema.ema, model_teacher, word_size=opt.world_size, keep_rate=0.)
-                elif (
-                        ni - hyp['burn_up_step']
-                ) % hyp['teacher_update_iter'] == 0:
+                elif i > 0 and i  % hyp['teacher_update_iter'] == 0:
                     if i == 0:
                         print(f"Iteration {ni} - Epoch{epoch}: Update teacher")
                     _update_teacher_model(model if ema is None else ema.ema, model_teacher, word_size=opt.world_size, keep_rate=hyp['ema_keep_rate'])
-               
+                time_dict["update_teacher"] = time.time() - start
+                start = time.time()
+            
                 '''
                 2.1 pseudo label prediction
                 pseudo_unlabel_targets=teacher(unlabel_data_weak)
@@ -526,65 +542,29 @@ def train(hyp, opt, device, tb_writer=None):
                     try:
                         
                         out = model_teacher(unlabel_imgs_weak_aug,augment=True, multi_view=True)
-                        # import pdb; pdb.set_trace()
+                        time_dict["predict_pseudo_label"] = time.time() - start
+                        start = time.time()
+            
+                  
                         """post-processing
                         """
-                       
-                        
-                        # pred = non_max_suppression(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
-                        # pseudo_label = convert_output_to_label(unlabel_imgs_weak_aug, pred, unlabel_shapes, conf=True).to(device)
-                        # semi_label_items += pseudo_label.shape[0]
-                        
-                        
-                        # pseudo_label = pseudo_label[:, :6] 
-                       
-                        # unlabel_targets_merge_reg, unlabel_targets_merge_cls = pseudo_label, pseudo_label
-                        
                         soft_pseudo_label,hard_pseudo_label = non_max_suppression_pseudo_decouple_multi_view(out,iou_thres=bbox_threshold, cls_thres=0, conf_thres=cls_threshold)
-                        unlabel_targets_hard = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), hard_pseudo_label, unlabel_shapes, conf=True).to(device)
-                        unlabel_targets_soft = convert_output_to_label(deepcopy(unlabel_imgs_weak_aug), soft_pseudo_label, unlabel_shapes, conf=True).to(device)
-                        # unlabel_targets_merge_reg = torch.zeros(0, 6).to(device)
-                        # unlabel_targets_merge_cls = torch.zeros(0, 6).to(device)
-                        # for batch_ind, (pseudo_box_reg,pseudo_box_cls) in enumerate(
-                        #         zip(pseudo_boxes_reg,pseudo_boxes_cls)):
-                        #     # two stage filters
-                        #     n_box = pseudo_box_cls.size()[0]
-                        #     unlabel_target_cls = torch.zeros(n_box, 6).to(device)
-                        #     unlabel_target_cls[:, 0] = batch_ind
-                        #     unlabel_target_cls[:, 1] = pseudo_box_cls[:, -1]
-                        #     unlabel_target_cls[:, 2:] = xyxy2xywhn(pseudo_box_cls[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                        #                                         h=unlabel_imgs_weak_aug.size()[3])
-                        #     unlabel_targets_merge_cls = torch.cat([unlabel_targets_merge_cls, unlabel_target_cls])
-
-
-                        #     n_box = pseudo_box_reg.size()[0]
-                        #     unlabel_target_reg = torch.zeros(n_box, 6).to(device)
-                        #     unlabel_target_reg[:, 0] = batch_ind
-                        #     unlabel_target_reg[:, 1] = pseudo_box_reg[:, -1]
-                        #     unlabel_target_reg[:, 2:] = xyxy2xywhn(pseudo_box_reg[:, 0:4], w=unlabel_imgs_weak_aug.size()[2],
-                        #                                         h=unlabel_imgs_weak_aug.size()[3])
-                        #     unlabel_targets_merge_reg = torch.cat([unlabel_targets_merge_reg, unlabel_target_reg])
-                            # semi_label_items += n_box
-                       
+                        unlabel_targets_hard = convert_output_to_label_2(deepcopy(unlabel_imgs_weak_aug), hard_pseudo_label, conf=True).to(device)
+                        unlabel_targets_soft = convert_output_to_label_2(deepcopy(unlabel_imgs_weak_aug), soft_pseudo_label, conf=True).to(device)
                         semi_label_items += unlabel_targets_hard.shape[0] + unlabel_targets_soft.shape[0]
 
-                        if (i % round(nb/5) == 0):
+                        if (i % round(nb/10) == 0):
                             f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_hard.jpg"
-                            Thread(
-                                target=plot_images,
-                                args=(unlabel_imgs_weak_aug, unlabel_targets , None, f),
-                                kwargs = {"predictions":unlabel_targets_hard, "conf_thres": 0.0},
-                                daemon=True,
-                            ).start()
+                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=unlabel_targets_hard)
+                            
                             f =  save_dir / f"train_epoch_{epoch}_batch_{i}_psuedo_label_soft.jpg"
-                            Thread(
-                                target=plot_images,
-                                args=(unlabel_imgs_weak_aug,unlabel_targets, None, f),
-                                kwargs = {"predictions":unlabel_targets_soft, "conf_thres": 0.0},
-                                daemon=True,
-                            ).start()
+                            plot_images(unlabel_imgs_strong_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=unlabel_targets_soft )
+                            
                         unlabel_targets_hard = unlabel_targets_hard[:,:6]
                         unlabel_targets_soft = unlabel_targets_soft[:,:6]
+
+                        time_dict["predict_pseudo_label_filter"] = time.time() - start
+                        start = time.time()
                     except Exception as e:
                         print(e)
                         print(traceback.format_exc())
@@ -602,16 +582,25 @@ def train(hyp, opt, device, tb_writer=None):
                     with amp.autocast(enabled=cuda):
                         # print(ni)
                         pred = model(label_and_unlabel_imgs)  # forward
+                        time_dict["train_on_batch_semi_foward"] = time.time() - start
+                        start = time.time()
                         sup_pred=[p[:Bl] for p in pred]
                         semi_pred=[p[Bl:] for p in pred]
-                    
-                        loss, loss_items = compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
-                        #pay attention: ignoring the regression term
-                        semi_loss_hard, semi_loss_items_hard = compute_loss_semi(semi_pred, unlabel_targets_hard.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
-                        semi_loss_soft, semi_loss_items_soft = compute_loss_semi(semi_pred, unlabel_targets_soft.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
-                        semi_loss = 4 * semi_loss_hard + semi_loss_soft
-                        # semi_loss, semi_loss_items = compute_loss_semi(semi_pred, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
-                        semi_loss_items = 4 * semi_loss_items_hard + semi_loss_items_soft
+
+
+                        if hyp['loss_ota'] == 1:
+                            loss, loss_items = compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
+                            semi_loss_hard, semi_loss_items_hard = compute_loss_ota_semi(semi_pred, unlabel_targets_hard.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                            semi_loss_soft, semi_loss_items_soft = compute_loss_ota_semi(semi_pred, unlabel_targets_soft.to(device), unlabel_imgs_strong_aug, obj_only=True)  # loss scaled by batch_size
+
+                        else:
+                            loss, loss_items = compute_loss(sup_pred, label_targets.to(device))  # loss scaled by batch_size
+                            semi_loss_hard, semi_loss_items_hard = compute_loss_semi(semi_pred, unlabel_targets_hard.to(device))  # loss scaled by batch_size
+                            semi_loss_soft, semi_loss_items_soft = compute_loss_semi(semi_pred, unlabel_targets_soft.to(device), obj_only=True)  # loss scaled by batch_size
+
+
+                        semi_loss =  semi_loss_hard + semi_loss_soft
+                        semi_loss_items =  semi_loss_items_hard + semi_loss_items_soft
                         # print(semi_loss_items)
                         if rank != -1:
                             semi_loss *= opt.world_size  # gradient averaged between devices in DDP mode
@@ -619,6 +608,8 @@ def train(hyp, opt, device, tb_writer=None):
                         if opt.quad:
                             semi_loss *= 4.
                             loss *= 4
+                        time_dict["train_on_batch_semi_loss"] = time.time() - start
+                        start = time.time()
                 except Exception as e:
                     print(e)
                     print(traceback.format_exc())
@@ -631,11 +622,13 @@ def train(hyp, opt, device, tb_writer=None):
             # Backward
             try:
                 scaler.scale(loss).backward()
-            
             except Exception as e:
                 print(e)
                 print(traceback.format_exc())
                 import pdb; pdb.set_trace()
+            time_dict["loss_backward"] = time.time() - start
+            start = time.time()
+            
 
             # Optimize
             if ni % accumulate == 0:
@@ -644,6 +637,9 @@ def train(hyp, opt, device, tb_writer=None):
                 optimizer.zero_grad()
                 if ema:
                     ema.update(model)
+            
+            time_dict["optimizer"] = time.time() - start
+            start = time.time()
 
             # Print
             if rank in [-1, 0]:
@@ -659,7 +655,8 @@ def train(hyp, opt, device, tb_writer=None):
                                                   save_dir.glob('train*.jpg') if x.exists()]})
 
 
-
+            if i % 50 == 0:
+                json.dump(json.load(open(time_file, "r")) + [time_dict] if os.path.exists(time_file) else [time_dict], open(time_file, 'w'))
             if rank in [-1, 0] and i % round(nb/10) == 0:
            
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
@@ -685,6 +682,8 @@ def train(hyp, opt, device, tb_writer=None):
                                                 v5_metric=opt.v5_metric, epoch=epoch)
                 with open(results_file, 'a') as f:
                     f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
+               
+                
                 # Log
                 tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/total_loss',  # train loss
                         'train/semi_obj_loss', 'train/semi_cls_loss', 'train/semi_box_los',
@@ -723,12 +722,19 @@ def train(hyp, opt, device, tb_writer=None):
                         wandb_logger.log_model(
                             last.parent, opt, epoch, fi, best_model=best_fitness == fi)
                 del ckpt
+                time_dict["evaluate"] = time.time() - start
+                start = time.time()
+            
             # end batch ------------------------------------------------------------------------------------------------
         # end epoch ----------------------------------------------------------------------------------------------------
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
         scheduler.step()
+
+        time_dict["scheduler"] = time.time() - start
+        start = time.time()
+            
 
         # DDP process 0 or single-GPU
         if rank in [-1, 0] or epoch % hyp["val_on_epoch"] == 0:
