@@ -93,7 +93,7 @@ def create_dataloader_semi(
 class X10Dataset(torch.utils.data.Dataset):
     def __init__(self, dataset, percent=10):
         self.dataset = dataset
-        self.percent = int(100/percent) - 1
+        self.percent = int(100/percent)
 
     def __len__(self):
         return len(self.dataset) * self.percent
@@ -404,8 +404,8 @@ class LoadImagesAndLabelsSemi(LoadImagesAndLabels):
         )  # BGR to RGB, to 3x416x416
         image_strong_aug = np.ascontiguousarray(image_strong_aug)
 
-        for ind in labels_out[:, 1].long():
-            label_class_one_hot[ind] = 1
+        # for ind in labels_out[:, 1].long():
+        #     label_class_one_hot[ind] = 1
 
         return (
             torch.from_numpy(image_weak_aug),

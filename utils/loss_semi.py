@@ -141,7 +141,7 @@ class ComputeLossOTASemi:
         # loss = lobj + lcls + lbox * self.hyp["semi_reg_loss_weight"]
         # return (loss) * bs, torch.cat((lobj, lcls, loss)).detach()
         loss = lbox + lobj + lcls
-        return loss * bs, torch.cat((lobj, lcls, lbox)).detach()
+        return loss * bs, torch.cat((lbox,lobj, lcls,  loss)).detach()
         # loss = lbox + lobj + lcls
         # return loss * bs, torch.cat((lbox, lobj, lcls, loss)).detach()
 
@@ -464,7 +464,7 @@ class ComputeLossSemi:
 
 
         loss = lbox + lobj + lcls
-        return loss * bs, torch.cat((lobj, lcls, lbox)).detach()
+        return loss * bs, torch.cat(( lbox,lobj, lcls, loss)).detach()
 
     def build_targets(self, p, targets):
         # Build targets for compute_loss(), input targets(image,class,x,y,w,h)

@@ -37,7 +37,7 @@ from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.loss_semi import ComputeLossOTASemi, ComputeLossSemi
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
-from utils.semi_psuedo_label_process import convert_output_to_label_2, non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
+from utils.semi_psuedo_label_process import convert_output_to_label_2, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
 from utils.torch_utils import ModelEMA, _update_teacher_model, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
@@ -400,9 +400,9 @@ def train(hyp, opt, device, tb_writer=None):
 
         pbar = enumerate(zip(train_label_loader,train_unlabel_loader))
 
-        logger.info(('\n' + '%10s' * 12) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_box','semi_obj', 'semi_cls','semi_total', 'labels', 'semi_labels'))
+        logger.info(('\n' + '%10s' * 14) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_box','semi_obj', 'semi_cls','semi_total', 'labels', 'semi_labels', 'cls_thres', 'box_thres'))
         with open(results_file, 'a') as f:
-            f.write( '%10s' * 12 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_box','semi_obj', 'semi_cls','semi_total', 'labels', 'semi_labels')\
+            f.write( '%10s' * 14 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_box','semi_obj', 'semi_cls','semi_total', 'labels', 'semi_labels', 'cls_thres', 'box_thres')\
                 + '%10s' * 7 % ('Val/Precision', 'Val/Recall', 'Val/mAP50', 'Val/mAP50:95', 'loss_bbox', 'loss_obj', 'loss_cls'))
             f.write('\n')
 
@@ -540,23 +540,27 @@ def train(hyp, opt, device, tb_writer=None):
                     model_teacher.eval()
                     with torch.no_grad():
                       
-                        out = model_teacher(unlabel_imgs_weak_aug)
+                        out = model_teacher(unlabel_imgs_weak_aug, augment=True, multi_view=True)
                         time_dict["predict_pseudo_label"] = time.time() - start
                         start = time.time()
 
 
-                        pred = non_max_suppression(out[0], conf_thres=cls_threshold, iou_thres=bbox_threshold)
-                        pseudo_label = convert_output_to_label_2(unlabel_imgs_weak_aug, pred, conf=True)
+                        pred_soft, pred_hard = non_max_suppression_pseudo_decouple_multi_view(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
+                        pseudo_label_hard = convert_output_to_label_2(unlabel_imgs_weak_aug, pred_hard, conf=True)
+                        pseudo_label_soft = convert_output_to_label_2(unlabel_imgs_weak_aug, pred_soft, conf=True)
                      
-                        semi_label_items = pseudo_label.shape[0]
+                        semi_label_items = pseudo_label_hard.shape[0] + pseudo_label_soft.shape[0]
 
                         if (i % round(nb/5) == 0):
                             f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_hard.jpg"
-                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=pseudo_label)
+                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=pseudo_label_hard)
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_soft.jpg"
+                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=pseudo_label_soft)
                     
 
                           
-                        unlabel_targets = pseudo_label[:,:6]
+                        unlabel_targets_hard = pseudo_label_hard[:,:6]
+                        unlabel_targets_soft = pseudo_label_soft[:,:6]
                         time_dict["predict_pseudo_label_filter"] = time.time() - start
                         start = time.time()
 
@@ -579,11 +583,16 @@ def train(hyp, opt, device, tb_writer=None):
 
                         if hyp['loss_ota'] == 1:
                             s_loss, s_loss_items = s_compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
-                            s_loss_semi, s_loss_items_semi = s_compute_loss_ota_semi(semi_pred, unlabel_targets.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                            s_loss_semi_hard, s_loss_items_semi_hard = s_compute_loss_ota_semi(semi_pred, unlabel_targets_hard.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                            s_loss_semi_soft, s_loss_items_semi_soft = s_compute_loss_ota_semi(semi_pred, unlabel_targets_soft.to(device), unlabel_imgs_strong_aug)
 
                         else:
                             s_loss, s_loss_items = s_compute_loss(sup_pred, label_targets.to(device))  # loss scaled by batch_size
-                            s_loss_semi, s_loss_items_semi  = s_compute_loss_semi(semi_pred, unlabel_targets.to(device))  # loss scaled by batch_size
+                            s_loss_semi_hard, s_loss_items_semi_hard = s_compute_loss_semi(semi_pred, unlabel_targets_hard.to(device))  # loss scaled by batch_size
+                            s_loss_semi_soft, s_loss_items_semi_soft = s_compute_loss_semi(semi_pred, unlabel_targets_soft.to(device)) 
+
+                        s_loss_semi = s_loss_semi_hard + s_loss_semi_soft * 0.25
+                        s_loss_items_semi = s_loss_items_semi_hard + s_loss_items_semi_soft * 0.25
 
                         s_loss = s_loss + s_loss_semi * hyp['semi_loss_weight']
                         s_loss_items_semi *= hyp['semi_loss_weight']
@@ -625,8 +634,8 @@ def train(hyp, opt, device, tb_writer=None):
                 mloss = (mloss * i + s_loss_items) / (i + 1)  # update mean losses
                 mloss_semi = (mloss_semi * i + s_loss_items_semi) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                s = ('%10s' * 2 + '%10.4g' * 10) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, *mloss_semi, label_targets.shape[0],  semi_label_items)
+                s = ('%10s' * 2 + '%10.4g' * 12) % (
+                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, *mloss_semi, label_targets.shape[0],  semi_label_items, cls_threshold, bbox_threshold)
 
                 pbar.set_description(s)
  

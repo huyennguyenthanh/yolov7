@@ -1,0 +1,28 @@
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/PolypsSet/PolypsSet/valid
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all        4254        4214       0.817       0.643       0.755       0.472
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/PolypsSet/PolypsSet/test
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all        4872        4719       0.784       0.617       0.745        0.42
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-300
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all          60          60       0.762       0.749       0.827       0.497
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ClinicDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all          62          69       0.727        0.58       0.645       0.353
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/CVC-ColonDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         380         380       0.694       0.516       0.607       0.289
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/ETIS-LaribPolypDB
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         196         209       0.624       0.407       0.469       0.186
+/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7_2_labels/fold_1_percent_10/best.pt
+/home/nguyen.thanh.huyenb/polyp_dataset/TestDataset/Kvasir
+               Class      Images      Labels           P           R      mAP@.5  mAP@.5:.95
+                 all         100         124       0.659       0.548       0.593       0.291
