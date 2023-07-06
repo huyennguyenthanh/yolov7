@@ -37,7 +37,7 @@ from utils.google_utils import attempt_download
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.loss_semi import ComputeLossOTASemi, ComputeLossSemi
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
-from utils.semi_psuedo_label_process import convert_output_to_label_2, non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn
+from utils.semi_psuedo_label_process import convert_output_to_label_2, non_max_suppression_pseudo_decouple, non_max_suppression_pseudo_decouple_multi_view, xyxy2xywhn, convert_to_eval_output
 from utils.torch_utils import ModelEMA, _update_teacher_model, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
@@ -88,8 +88,8 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    if pretrained:
-        weights = "/home/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_1_percent_10_semi_multi_view10/weights/epoch_000.pt"
+    if True:
+        weights = "/mnt/disk1/nguyen.thanh.huyenb/yolov7_train/YOLOv7/fold_3_percent_10/best.pt"
      
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
         model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
@@ -384,13 +384,8 @@ def train(hyp, opt, device, tb_writer=None):
                 if rank != 0:
                     dataset_label.indices = indices.cpu().numpy()
 
-
-        mloss = torch.zeros(4, device=device)  # mean losses
-        mloss_semi = torch.zeros(4, device=device)  # mean losses
-        s_loss_items_semi = torch.zeros(4, device=device)
-
         semi_label_items = torch.zeros(1, device=device)
-
+        t_loss_l = t_loss_u = t_loss_uda = s_loss_l_old = s_loss = s_loss_l_new = t_loss_mpl = t_loss = torch.zeros(1, device=device)
 
         if rank != -1:
             train_label_loader.sampler.set_epoch(epoch)
@@ -400,9 +395,9 @@ def train(hyp, opt, device, tb_writer=None):
 
         pbar = enumerate(zip(train_label_loader,train_unlabel_loader))
 
-        logger.info(('\n' + '%10s' * 12) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_box','semi_obj', 'semi_cls','semi_total', 'labels', 'semi_labels'))
+        logger.info(('\n' + '%10s' * 12) % ('Epoch', 'gpu_mem', 't_loss_l', 't_loss_u', 't_loss_uda', 's_loss_l_old', 's_loss', 's_loss_l_new', 't_loss_mpl', 't_loss','labels', 'semi_labels'))
         with open(results_file, 'a') as f:
-            f.write( '%10s' * 12 % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls','total','semi_box','semi_obj', 'semi_cls','semi_total', 'labels', 'semi_labels')\
+            f.write( '%10s' * 12 % ('Epoch', 'gpu_mem', 't_loss_l', 't_loss_u', 't_loss_uda', 's_loss_l_old', 's_loss', 's_loss_l_new', 't_loss_mpl', 't_loss','labels', 'semi_labels') \
                 + '%10s' * 7 % ('Val/Precision', 'Val/Recall', 'Val/mAP50', 'Val/mAP50:95', 'loss_bbox', 'loss_obj', 'loss_cls'))
             f.write('\n')
 
@@ -418,13 +413,13 @@ def train(hyp, opt, device, tb_writer=None):
         for i, data in pbar:  # batch -------------------------------------------------------------
             time_dict["i"] = i
             start = time.time()
-
+            semi_label_items = torch.zeros(1, device=device)
             (label_imgs, label_targets, label_paths, label_shapes), (
                 unlabel_imgs, unlabel_targets, unlabel_paths, unlabel_shapes) = data
             label_imgs_weak_aug, label_imgs_strong_aug = label_imgs
             unlabel_imgs_weak_aug, unlabel_imgs_strong_aug = unlabel_imgs
         
-            if (i % round(nb/5) == 0) and epoch == 0:
+            if (i % round(nb/10) == 0) and epoch == 0:
                 f =  save_dir / f"train_epoch_{epoch}_batch_{i}_label_weak.jpg"
                 Thread(
                     target=plot_images,
@@ -482,7 +477,6 @@ def train(hyp, opt, device, tb_writer=None):
           
             # Forward
            
-            semi_loss = torch.zeros(1, requires_grad=True, device=device)
 
             if epoch < hyp["supervised_epoch"]:
                 """1. Supervised part
@@ -524,6 +518,7 @@ def train(hyp, opt, device, tb_writer=None):
             else:
                 """Semi supervised part
                 """
+              
                 if i == 0 and epoch == hyp["supervised_epoch"]:
                     print(f"Iteration {ni} - Epoch{epoch}: Update teacher") 
                     _update_teacher_model(model if ema is None else ema.ema, model_teacher, word_size=opt.world_size, keep_rate=0.)
@@ -531,84 +526,116 @@ def train(hyp, opt, device, tb_writer=None):
                     if i == 0:
                         print(f"Iteration {ni} - Epoch{epoch}: Update teacher")
                     _update_teacher_model(model if ema is None else ema.ema, model_teacher, word_size=opt.world_size, keep_rate=hyp['ema_keep_rate'])
-                
-                time_dict["update_teacher"] = time.time() - start
-                start = time.time()
+
                 try: 
-                    """Predict pseudo label
-                    """
-                    model_teacher.eval()
-                    with torch.no_grad():
-                      
-                        out = model_teacher(unlabel_imgs_weak_aug)
-                        time_dict["predict_pseudo_label"] = time.time() - start
-                        start = time.time()
-
-
-                        pred = non_max_suppression(out[0], conf_thres=cls_threshold, iou_thres=bbox_threshold)
-                        pseudo_label = convert_output_to_label_2(unlabel_imgs_weak_aug, pred, conf=True, device=device)
-                     
-                        semi_label_items = pseudo_label.shape[0]
-
-                        if (i % round(nb/5) == 0):
-                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_hard.jpg"
-                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=pseudo_label)
-                    
-
-                          
-                        unlabel_targets = pseudo_label[:,:6]
-                        time_dict["predict_pseudo_label_filter"] = time.time() - start
-                        start = time.time()
-
-                    """Foward student
-                    """
-
+                    '''
+                    2. foward old
+                    '''
+                
                     label_imgs = label_imgs_weak_aug  if i % 2 == 0 else label_imgs_strong_aug
-                    Bl=label_imgs.size()[0]
-                    label_and_unlabel_imgs=torch.cat([label_imgs,unlabel_imgs_strong_aug])
-                 
-                            
                     with amp.autocast(enabled=cuda):
-                 
-                        pred = model(label_and_unlabel_imgs)  # forward
-                        time_dict["train_on_batch_semi_foward"] = time.time() - start
-                        start = time.time()
-                        sup_pred=[p[:Bl] for p in pred]
-                        semi_pred=[p[Bl:] for p in pred]
-
+                        '''2.1 Teacher foward on weak, predict in strong
+                        '''
+                        l = label_imgs.size()[0]
+                        ul = unlabel_imgs_weak_aug.shape[0]
+                        t_images=torch.cat([label_imgs, unlabel_imgs_strong_aug])
+                        t_pred = model_teacher(t_images)
+                        t_pred_l= [p[:l] for p in t_pred]
+                        t_pred_us = [p[l:] for p in t_pred]
+                        del t_pred
 
                         if hyp['loss_ota'] == 1:
-                            s_loss, s_loss_items = s_compute_loss_ota(sup_pred, label_targets.to(device), label_imgs)  # loss scaled by batch_size
-                            s_loss_semi, s_loss_items_semi = s_compute_loss_ota_semi(semi_pred, unlabel_targets.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
-
+                            t_loss_l, t_loss_items = t_compute_loss_ota(t_pred_l, label_targets.to(device), label_imgs)  
                         else:
-                            s_loss, s_loss_items = s_compute_loss(sup_pred, label_targets.to(device))  # loss scaled by batch_size
-                            s_loss_semi, s_loss_items_semi  = s_compute_loss_semi(semi_pred, unlabel_targets.to(device))  # loss scaled by batch_size
+                            t_loss_l, t_loss_items = t_compute_loss(t_pred_l, label_targets.to(device))  
 
-                        s_loss = s_loss + s_loss_semi * hyp['semi_loss_weight']
-                        s_loss_items_semi *= hyp['semi_loss_weight']
+
+                        with torch.no_grad():
+                            t_pred_uw = model_teacher(unlabel_imgs_weak_aug)
+
+                        out = convert_to_eval_output(model_teacher,t_pred_uw, device=device)
+                        pred = non_max_suppression(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
+                        pseudo_label = convert_output_to_label_2(unlabel_imgs_weak_aug, pred, conf=True, device=device).detach()
+                        
+                        if (i % round(nb/5) == 0):
+                            f =  save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label_hard.jpg"
+                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f,conf_thres=0.0, predictions=pseudo_label.detach())
+
+                        pseudo_label = pseudo_label[:,:6]
                       
-                        if rank != -1:
-                            semi_loss *= opt.world_size  # gradient averaged between devices in DDP mode
-                            loss*=opt.world_size
-                        if opt.quad:
-                            semi_loss *= 4.
-                            loss *= 4
-                        time_dict["train_on_batch_semi_loss"] = time.time() - start
-                        start = time.time()
+                        if hyp['loss_ota'] == 1:
+                            t_loss_u, semi_loss_items = t_compute_loss_ota_semi(t_pred_us, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                        else:
+                            t_loss_u, semi_loss_items = t_compute_loss_semi(t_pred_us, pseudo_label.to(device)) 
+
+                        semi_label_items = pseudo_label.shape[0]
+                        
+                        t_loss_uda = t_loss_l + hyp["semi_loss_weight"] * t_loss_u
+
+                        '''2.2 Student foward on strong
+                        '''
+                        s_images = torch.cat((label_imgs, unlabel_imgs_strong_aug)) # [64,3,32,32]
+                        s_pred = model(s_images) # [64,10]
+                        s_pred_l = [p[:l] for p in s_pred]
+                        s_pred_us = [p[l:] for p in s_pred]
+                        del s_pred
 
                     
+                        if hyp['loss_ota'] == 1:
+                            s_loss_l_old, loss_items = s_compute_loss_ota(s_pred_l, label_targets.to(device), label_imgs)  
+                        else:
+                            s_loss_l_old, loss_items = s_compute_loss(s_pred_l, label_targets.to(device), grad=False)
+                        s_loss_l_old = s_loss_l_old.detach() 
+
+                        if hyp['loss_ota'] == 1:
+                            s_loss, s_loss_items = s_compute_loss_ota(s_pred_us, pseudo_label.to(device), label_imgs)  # loss scaled by batch_size
+                        else:
+                            s_loss, s_loss_items = s_compute_loss(s_pred_us, pseudo_label.to(device))  # loss scaled by batch_size
+
+                    '''3. loss backward
+                    '''
                     s_scaler.scale(s_loss).backward()
+                    s_scaler.step(s_optimizer)  # optimizer.step
+                    s_scaler.update()
+                
+                    if ema:
+                        ema.update(model)
+                    
+                    '''
+                    4. fowarl new
+                    '''
+                    with amp.autocast(enabled=cuda):
+                        with torch.no_grad():
+                            s_pred = model(label_imgs)
+                        s_loss_l_new = s_compute_loss(s_pred_l, label_targets.to(device), grad=False)[0]   
+
+                        dot_product = s_loss_l_new - s_loss_l_old
+                        t_loss_mpl = dot_product * t_loss_u.detach()
+                        t_loss = t_loss_uda + t_loss_mpl
+
+
+                    '''
+                    5. loss backward
+                    loss_semi= student.forward_loss(unlabel_imgs_strong, pseudo_unlabel_targets)
+                    '''
+
+                    t_scaler.scale(t_loss).backward()
                     if ni % accumulate == 0:
-                        s_scaler.step(s_optimizer)  # optimizer.step
-                        s_scaler.update()
-                        s_optimizer.zero_grad()
+                        t_scaler.step(t_optimizer)  # optimizer.step
+                        t_scaler.update()
+                        t_optimizer.zero_grad()
                         if ema:
                             ema.update(model)
 
+                    
+                        t_scheduler.step()
+
+                    model.zero_grad()
+                    model_teacher.zero_grad()
 
 
-
+                
+                
                 except Exception as e:
                     print(e)
                     print(traceback.format_exc())
@@ -621,13 +648,12 @@ def train(hyp, opt, device, tb_writer=None):
             start = time.time()
 
             # Print
-            if rank in [-1, 0] and i % 10 == 0:
-                mloss = (mloss * i + s_loss_items) / (i + 1)  # update mean losses
-                mloss_semi = (mloss_semi * i + s_loss_items_semi) / (i + 1)  # update mean losses
+            if rank in [-1, 0] :
+              
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
+         
                 s = ('%10s' * 2 + '%10.4g' * 10) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, *mloss_semi, label_targets.shape[0],  semi_label_items)
-
+                    '%g/%g' % (epoch, epochs - 1), mem, t_loss_l, t_loss_u, t_loss_uda, s_loss_l_old, s_loss,s_loss_l_new, t_loss_mpl, t_loss , label_targets.shape[0], semi_label_items)
                 pbar.set_description(s)
  
                 if wandb_logger.wandb:
@@ -663,15 +689,13 @@ def train(hyp, opt, device, tb_writer=None):
                 with open(results_file, 'a') as f:
                     f.write(s + '%10.4g' * 7 % results + '\n')  # append metrics, val_loss
                
-                 
-                tags = ['train/box_loss', 'train/obj_loss', 'train/cls_loss', 'train/total_loss',
-                        'train/box_loss_semi', 'train/obj_loss_semi', 'train/cls_loss_semi', 'train/total_loss_semi',
+               
+              
+                tags = [
                         'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                         'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
-                    ] 
-              
-           
-                for x, tag in zip(list(mloss) + list(mloss_semi) + list(results), tags):
+                    ]  # params
+                for x, tag in zip( list(results), tags):
                     if wandb_logger.wandb:
                         wandb_logger.log({tag: x})  # W&B
                 wandb_logger.end_iter()

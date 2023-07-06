@@ -3,6 +3,7 @@ import time
 import torch
 import copy
 import torchvision
+import traceback
 from .general import *
 import copy
 
@@ -550,3 +551,28 @@ def non_max_suppression_custom(predictions, conf_thres=0.25, iou_thres=0.45):
         output_reg.append(filtered_pred[keep])
 
     return output_cls, output_reg
+
+
+def convert_to_eval_output(model,out,device=torch.device("cpu")):
+    try:
+        z = []
+        no = model.nc + 5
+        bs = out[0].shape[0]
+        for i in range(len(out)):
+
+            y = out[i].sigmoid().to(device)
+            
+            if model.model[-1].grid[i].shape[2:4] != out[i].shape[2:4]:
+                ny, nx = y.shape[2:4]
+                model.model[-1].grid[i] = model.model[-1]._make_grid(nx, ny).to(out[i].device)
+
+            
+            y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + model.model[-1].grid[i].to(device)) * model.model[-1].stride[i].to(device)  # xy
+            y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * model.model[-1].anchor_grid[i]  # wh
+            z.append(y.view(bs, -1, no))
+        z = torch.cat(z, 1)
+    except Exception as e:
+        print(e)
+        traceback.print_exc()
+        import pdb; pdb.set_trace()
+    return z

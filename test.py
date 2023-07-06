@@ -62,7 +62,7 @@ def test(data,
         gs = max(int(model.stride.max()), 32)  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
 
-        with open(save_dir / f'results.txt', "a") as f:
+        with open(save_dir / f'results_test.txt', "a") as f:
             f.write(weights[0] + "\n")
         
         
@@ -243,7 +243,7 @@ def test(data,
     pf = '%20s' + '%12i' * 2 + '%12.3g' * 4  # print format
     print(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
     if not training:
-        with open(save_dir / f'results.txt', "a") as f:
+        with open(save_dir / f'results_test.txt', "a") as f:
             f.write(data[task] + "\n")
             f.write(s + "\n")
             f.write(pf % ('all', seen, nt.sum(), mp, mr, map50, map) + "\n")
