@@ -61,7 +61,7 @@ class ComputeLossOTASemi:
             setattr(self, k, getattr(det, k))
 
     def __call__(
-        self, p, targets, imgs, cls_only=False, bbox_only=False, obj_only=False, semi=False
+        self, p, targets, imgs, cls_only=False, bbox_only=False, obj_only=False, grad=True
     ):  # predictions, targets, model
         device = targets.device
         lcls, lbox, lobj = (
@@ -76,6 +76,8 @@ class ComputeLossOTASemi:
 
         # Losses
         for i, pi in enumerate(p):  # layer index, layer predictions
+            if not grad:
+                pi = pi.detach()
             b, a, gj, gi = bs[i], as_[i], gjs[i], gis[i]  # image, anchor, gridy, gridx
             tobj = torch.zeros_like(pi[..., 0], device=device)  # target obj
 
