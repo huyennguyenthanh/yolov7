@@ -266,6 +266,8 @@ train.sh
 YOLOv7/
 workspace/
 YOLOv7_test_semi/
-YOLOv7_2_labels/
 YOLOv7_benchmark/
+YOLOv7_small/
+YOLOv7_2_labels/
 YOLOv7_test_semi_mpl/
+YOLOv7_test_semi_mpl_test/

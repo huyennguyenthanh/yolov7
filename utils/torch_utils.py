@@ -47,6 +47,14 @@ def _update_teacher_model(student, teacher, word_size=1, keep_rate=0.996):
     teacher.load_state_dict(new_teacher_dict)
     return teacher
 
+def update_teacher_model_mpl(student_model, teacher_model):
+    device = next(teacher_model.parameters()).device
+    teacher_model.load_state_dict(student_model.state_dict())
+    
+    teacher_model.train(student_model.training)
+    teacher_model.to(device)
+    
+    return teacher_model
 
 @contextmanager
 def torch_distributed_zero_first(local_rank: int):

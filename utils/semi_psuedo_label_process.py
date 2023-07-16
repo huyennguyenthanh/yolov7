@@ -4,6 +4,8 @@ import torch
 import copy
 import torchvision
 import traceback
+from utils.torch_utils import is_parallel
+from utils.datasets import box_candidates
 from .general import *
 import copy
 
@@ -554,9 +556,12 @@ def non_max_suppression_custom(predictions, conf_thres=0.25, iou_thres=0.45):
 
 
 def convert_to_eval_output(model,out,device=torch.device("cpu")):
+
+    model = model.module if is_parallel(model) else model
+    
     try:
         z = []
-        no = model.nc + 5
+        no = model.model[-1].nc + 5
         bs = out[0].shape[0]
         for i in range(len(out)):
 
