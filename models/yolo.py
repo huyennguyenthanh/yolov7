@@ -2,7 +2,7 @@ import argparse
 import logging
 import sys
 from copy import deepcopy
-
+import traceback
 sys.path.append('./')  # to run '$ python *.py' files in subdirectories
 logger = logging.getLogger(__name__)
 import torch
@@ -127,13 +127,17 @@ class IDetect(nn.Module):
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
 
             if not self.training:  # inference
-                if self.grid[i].shape[2:4] != x[i].shape[2:4]:
-                    self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
-
-                y = x[i].sigmoid()
-                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
-                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
-                z.append(y.view(bs, -1, self.no))
+                try:
+                    if self.grid[i].shape[2:4] != x[i].shape[2:4]:
+                        self.grid[i] = self._make_grid(nx, ny).to(x[i].device)
+                   
+                    y = x[i].sigmoid()
+                    y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + self.grid[i].to(y.device)) * self.stride[i].to(y.device)  # xy
+                    y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
+                    z.append(y.view(bs, -1, self.no))
+                except Exception as e:
+                    print(traceback.format_exc())
+                    import pdb; pdb.set_trace()
 
         return x if self.training else (torch.cat(z, 1), x)
     

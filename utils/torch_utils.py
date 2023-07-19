@@ -48,10 +48,24 @@ def _update_teacher_model(student, teacher, word_size=1, keep_rate=0.996):
     return teacher
 
 def update_teacher_model_mpl(student_model, teacher_model):
+    student_model_dict = student_model.state_dict()
     device = next(teacher_model.parameters()).device
-    teacher_model.load_state_dict(student_model.state_dict())
-    
-    teacher_model.train(student_model.training)
+    new_teacher_dict = OrderedDict()
+ 
+    for key, value in teacher_model.state_dict().items():
+        if key in student_model_dict.keys():
+            new_teacher_dict[key] = (
+                student_model_dict[key]
+            )
+        elif key.replace('module.', '') in student_model_dict.keys():
+            new_teacher_dict[key] = (
+                student_model_dict[key.replace('module.', '')]
+            )
+        else:
+            raise Exception("{} is not found in student model".format(key))
+
+    teacher_model.load_state_dict(new_teacher_dict)
+    teacher_model.train()
     teacher_model.to(device)
     
     return teacher_model

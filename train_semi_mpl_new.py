@@ -30,6 +30,7 @@ from utils.datasets_semi import  create_dataloader_label, create_dataloader_semi
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, non_max_suppression, strip_optimizer, get_latest_run, check_dataset, check_file, check_git_status, check_img_size, \
     check_requirements, print_mutation, set_logging, one_cycle, colorstr
+from utils.semi_psuedo_label_process import non_max_suppression_pseudo_decouple_multi_view
 from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.loss_semi import ComputeLossOTASemi, ComputeLossSemi
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
@@ -112,7 +113,7 @@ def train(hyp, opt, device, tb_writer=None):
         ckpt = torch.load(weights, map_location=device) 
         if ema and ckpt.get('ema'):
             ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
-            ema.updates = ckpt['updates']
+            # ema.updates = ckpt['updates']
 
     # Resume
     start_epoch, best_fitness = 0, 0.0
@@ -282,7 +283,7 @@ def train(hyp, opt, device, tb_writer=None):
             label_imgs_weak_aug, label_imgs_strong_aug = label_imgs
             unlabel_imgs_weak_aug, unlabel_imgs_strong_aug = unlabel_imgs
         
-            if (i % round(nb/10) == 0) and epoch == 0:
+            if (i % round(nb/5) == 0) and epoch == 0:
                 f =  save_dir / f"train_epoch_{epoch}_batch_{i}_label_weak.jpg"
                 Thread(
                     target=plot_images,
@@ -373,7 +374,7 @@ def train(hyp, opt, device, tb_writer=None):
             
                 s_scaler.step(s_optimizer)  # optimizer.step
                 s_scaler.update()
-                # s_optimizer.zero_grad()
+                s_optimizer.zero_grad()
                 if ema:
                     ema.update(model)
 
@@ -381,7 +382,7 @@ def train(hyp, opt, device, tb_writer=None):
                 """Semi supervised part
                 """
               
-                if i == 0 and epoch == hyp["supervised_epoch"] and hyp["supervised_epoch"] != 0:
+                if i == 0 and epoch == hyp["supervised_epoch"]: # and hyp["supervised_epoch"] != 0:
                     print(f"Iteration {ni} - Epoch{epoch}: Update teacher") 
                     update_teacher_model_mpl(model if ema is None else ema.ema, model_teacher)
              
@@ -407,14 +408,19 @@ def train(hyp, opt, device, tb_writer=None):
                         else:
                             t_loss_l, t_loss_items = compute_loss(t_pred_l, label_targets.to(device))  
 
+                        model_teacher.eval()
+                        model_teacher.to(device)
                         with torch.no_grad():
-                            t_pred_uw = model_teacher(unlabel_imgs_weak_aug)
+                            out = model_teacher(unlabel_imgs_weak_aug, augment=True, multi_view=True)
 
-                        out = convert_to_eval_output(model_teacher,t_pred_uw, device=device)
-                        pred = non_max_suppression(out, conf_thres=cls_threshold, iou_thres=bbox_threshold)
+                        # out = convert_to_eval_output(model_teacher,t_pred_uw, device=device)
+                        pred = non_max_suppression_pseudo_decouple_multi_view(out, conf_thres=cls_threshold, iou_thres=bbox_threshold, max_det=5)[0]
                         pseudo_label = convert_output_to_label_2(unlabel_imgs_weak_aug, pred, conf=True, device=device).detach()
+                        model_teacher.train()
+                     
+            
                         
-                        if (i % round(nb/20) == 0):
+                        if i < 3 or (i % round(nb/20) == 0):
                             f = save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label.jpg"
                             plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f, conf_thres=0.0, predictions=deepcopy(pseudo_label).detach())
 
@@ -439,9 +445,9 @@ def train(hyp, opt, device, tb_writer=None):
 
                     
                         if hyp['loss_ota'] == 1:
-                            s_loss_l_old, loss_items = compute_loss_ota(s_pred_l, label_targets.to(device), label_imgs, grad=False)  
+                            s_loss_l_old, loss_items = compute_loss_ota(s_pred_l, label_targets.to(device), label_imgs)  
                         else:    
-                            s_loss_l_old, loss_items = compute_loss(s_pred_l, label_targets.to(device), grad=False)
+                            s_loss_l_old, loss_items = compute_loss(s_pred_l, label_targets.to(device))
                         
 
                         if hyp['loss_ota'] == 1:
@@ -449,16 +455,18 @@ def train(hyp, opt, device, tb_writer=None):
                         else:
                             s_loss, s_loss_items = compute_loss(s_pred_us, pseudo_label.to(device))  # loss scaled by batch_size
 
+                        s_loss = s_loss_l_old + hyp["semi_loss_weight"] * s_loss
+
+
                     '''3. loss backward
                     '''
                     s_scaler.scale(s_loss).backward()
                     s_scaler.step(s_optimizer)  # optimizer.step
                     s_scaler.update()
-                    # s_optimizer.zero_grad()
+                    s_optimizer.zero_grad()
                     s_scheduler.step()
                     if ema:
                         ema.update(model)
-                    
                     '''
                     4. fowarl new
                     '''
@@ -471,7 +479,7 @@ def train(hyp, opt, device, tb_writer=None):
                         else:
                             s_loss_l_new, loss_items = compute_loss(s_pred_l, label_targets.to(device), grad=False )
 
-                        dot_product = s_loss_l_new - s_loss_l_old
+                        dot_product = s_loss_l_new - s_loss_l_old.detach()
                         t_loss_mpl = dot_product * t_loss_u
                         t_loss = t_loss_uda + t_loss_mpl
 
@@ -485,11 +493,9 @@ def train(hyp, opt, device, tb_writer=None):
                
                     t_scaler.step(t_optimizer)  # optimizer.step
                     t_scaler.update()
-                    # t_optimizer.zero_grad()
+                    t_optimizer.zero_grad()
                     t_scheduler.step()
-                    if ema:
-                        ema.update(model)
-
+               
                     
 
                     model.zero_grad()
@@ -525,12 +531,9 @@ def train(hyp, opt, device, tb_writer=None):
 
             if i % 50 == 0:
                 json.dump(json.load(open(time_file, "r")) + [time_dict] if os.path.exists(time_file) else [time_dict], open(time_file, 'w'))
-            if rank in [-1, 0] and i % round(nb/20) == 0:
+            if rank in [-1, 0] and i % round(nb/10) == 0:
            
                 ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
-                # if epoch < hyp["supervised_epoch"]:
-                print("Evaluate on EMA")
-                val_model = deepcopy(ema.ema)
             
                 final_epoch = epoch + 1 == epochs
                 print("Evaluate EMA")
@@ -547,20 +550,23 @@ def train(hyp, opt, device, tb_writer=None):
                                                 compute_loss=compute_loss,
                                                 is_coco=is_coco,
                                                 v5_metric=opt.v5_metric, epoch=epoch)
-                print("Evaluate  Teacher")
-                results_2, maps, _ = test.test(data_dict,
-                                                batch_size=batch_size * 2,
-                                                imgsz=imgsz_test,
-                                                model=deepcopy(model_teacher.module) if is_parallel(model_teacher) else model_teacher,
-                                                single_cls=opt.single_cls,
-                                                dataloader=valloader,
-                                                save_dir=save_dir,
-                                                verbose=nc < 50 and final_epoch,
-                                                plots=False,
-                                                wandb_logger=wandb_logger,
-                                                compute_loss=compute_loss,
-                                                is_coco=is_coco,
-                                                v5_metric=opt.v5_metric, epoch=epoch)
+                if epoch < hyp["supervised_epoch"]:
+                    results_2 = (0,0,0,0,0,0,0)
+                else:
+                    print("Evaluate  Teacher")
+                    results_2, maps, _ = test.test(data_dict,
+                                                    batch_size=batch_size * 2,
+                                                    imgsz=imgsz_test,
+                                                    model=deepcopy(model_teacher.module) if is_parallel(model_teacher) else model_teacher,
+                                                    single_cls=opt.single_cls,
+                                                    dataloader=valloader,
+                                                    save_dir=save_dir,
+                                                    verbose=nc < 50 and final_epoch,
+                                                    plots=False,
+                                                    wandb_logger=wandb_logger,
+                                                    compute_loss=compute_loss,
+                                                    is_coco=is_coco,
+                                                    v5_metric=opt.v5_metric, epoch=epoch)
                 with open(results_file, 'a') as f:
                     f.write(s + '%10.4g' * 7 % results_1  + '%10.4g' * 7 % results_2 + '\n')  # append metrics, val_loss
                
@@ -583,6 +589,7 @@ def train(hyp, opt, device, tb_writer=None):
                         'model_teacher': deepcopy(model_teacher.module if is_parallel(model_teacher) else model_teacher).half(),
                         'model': deepcopy(model.module if is_parallel(model) else model).half(),
                         'ema': deepcopy(ema.ema).half(),
+                        'optimizer': s_optimizer.state_dict(),
                         'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
 

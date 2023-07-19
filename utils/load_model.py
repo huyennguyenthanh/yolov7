@@ -132,8 +132,10 @@ def load_model(opt, hyp, nc, weights='', device=torch.device("cuda:0"), model_te
 
     if pretrained:
         # Optimizer
-        if ckpt['optimizer'] is not None:
-            optimizer.load_state_dict(ckpt['optimizer'])
+        if 'optimizer' in ckpt.keys():
+            if ckpt['optimizer'] is not None:
+                optimizer.load_state_dict(ckpt['optimizer'])
+        if 'best_fitness' in ckpt.keys():      
             best_fitness = ckpt['best_fitness']
 
         del ckpt, state_dict
