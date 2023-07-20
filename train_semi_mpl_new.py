@@ -271,9 +271,9 @@ def train(hyp, opt, device, tb_writer=None):
         
         s_optimizer.zero_grad()
         t_optimizer.zero_grad()
-        # if not epoch <= hyp["supervised_epoch"]:
-        #     bbox_threshold = max(0.5,bbox_threshold - 0.05)
-        #     cls_threshold = min(0.4, cls_threshold + 0.1)
+        if not epoch <= hyp["supervised_epoch"]:
+            bbox_threshold = max(0.5,bbox_threshold - 0.05)
+            cls_threshold = min(0.25, cls_threshold + 0.1)
         for i, data in pbar:  # batch -------------------------------------------------------------
             time_dict["i"] = i
             start = time.time()
@@ -410,30 +410,45 @@ def train(hyp, opt, device, tb_writer=None):
 
                         model_teacher.eval()
                         model_teacher.to(device)
+                        # with torch.no_grad():
+                        #     out = model_teacher(unlabel_imgs_weak_aug)
+
                         with torch.no_grad():
                             out = model_teacher(unlabel_imgs_weak_aug, augment=True, multi_view=True)
 
                         # out = convert_to_eval_output(model_teacher,t_pred_uw, device=device)
-                        pred = non_max_suppression_pseudo_decouple_multi_view(out, conf_thres=cls_threshold, iou_thres=bbox_threshold, max_det=5)[0]
-                        pseudo_label = convert_output_to_label_2(unlabel_imgs_weak_aug, pred, conf=True, device=device).detach()
+                        # pseudo_label = convert_output_to_label_2(unlabel_imgs_weak_aug, pred, conf=True, device=device).detach()
+                        pred_soft, pred_hard = non_max_suppression_pseudo_decouple_multi_view(out, conf_thres=cls_threshold, iou_thres=bbox_threshold, max_det=5)
+                        pseudo_label_soft = convert_output_to_label_2(unlabel_imgs_weak_aug, pred_soft, conf=True, device=device).detach()
+                        pseudo_label_hard = convert_output_to_label_2(unlabel_imgs_weak_aug, pred_hard, conf=True, device=device).detach()
                         model_teacher.train()
                      
             
                         
                         if i < 3 or (i % round(nb/20) == 0):
                             f = save_dir / f"train_epoch_{epoch}_batch_{i}_pseudo_label.jpg"
-                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f, conf_thres=0.0, predictions=deepcopy(pseudo_label).detach())
+                            plot_images(unlabel_imgs_weak_aug, unlabel_targets, None, f, conf_thres=0.0, predictions=deepcopy(pseudo_label_soft).detach())
 
-                        pseudo_label = pseudo_label[:,:6]
-                      
+                        # pseudo_label = pseudo_label[:,:6]
+                        pseudo_label_soft = pseudo_label_soft[:,:6]
+                        pseudo_label_hard = pseudo_label_hard[:,:6]
+
+                        # if hyp['loss_ota'] == 1:
+                        #     t_loss_u, semi_loss_items = compute_loss_ota(t_pred_us, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                        # else:
+                        #     t_loss_u, semi_loss_items = compute_loss(t_pred_us, pseudo_label.to(device)) 
+
                         if hyp['loss_ota'] == 1:
-                            t_loss_u, semi_loss_items = compute_loss_ota(t_pred_us, pseudo_label.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                            t_loss_u_soft, semi_loss_items = compute_loss_ota(t_pred_us, pseudo_label_soft.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
+                            t_loss_u_hard, semi_loss_items = compute_loss_ota(t_pred_us, pseudo_label_hard.to(device), unlabel_imgs_strong_aug)  # loss scaled by batch_size
                         else:
-                            t_loss_u, semi_loss_items = compute_loss(t_pred_us, pseudo_label.to(device)) 
+                            t_loss_u_soft, semi_loss_items = compute_loss(t_pred_us, pseudo_label_soft.to(device)) 
+                            t_loss_u_hard, semi_loss_items = compute_loss(t_pred_us, pseudo_label_hard.to(device)) 
 
-                        semi_label_items = pseudo_label.shape[0]
+                        semi_label_items = pseudo_label_soft.shape[0]
                         
-                        t_loss_uda = t_loss_l + hyp["semi_loss_weight"] * t_loss_u
+                        # t_loss_uda = t_loss_l + hyp["semi_loss_weight"] * t_loss_u
+                        t_loss_uda = t_loss_l + hyp["semi_loss_weight"] * t_loss_u_soft
 
                         '''2.2 Student foward on strong
                         '''
@@ -451,9 +466,9 @@ def train(hyp, opt, device, tb_writer=None):
                         
 
                         if hyp['loss_ota'] == 1:
-                            s_loss, s_loss_items = compute_loss_ota(s_pred_us, pseudo_label.to(device), label_imgs)  # loss scaled by batch_size
+                            s_loss, s_loss_items = compute_loss_ota(s_pred_us, pseudo_label_hard.to(device), label_imgs)  # loss scaled by batch_size
                         else:
-                            s_loss, s_loss_items = compute_loss(s_pred_us, pseudo_label.to(device))  # loss scaled by batch_size
+                            s_loss, s_loss_items = compute_loss(s_pred_us, pseudo_label_hard.to(device))  # loss scaled by batch_size
 
                         s_loss = s_loss_l_old + hyp["semi_loss_weight"] * s_loss
 
@@ -480,7 +495,7 @@ def train(hyp, opt, device, tb_writer=None):
                             s_loss_l_new, loss_items = compute_loss(s_pred_l, label_targets.to(device), grad=False )
 
                         dot_product = s_loss_l_new - s_loss_l_old.detach()
-                        t_loss_mpl = dot_product * t_loss_u
+                        t_loss_mpl = dot_product * t_loss_u_hard
                         t_loss = t_loss_uda + t_loss_mpl
 
 
