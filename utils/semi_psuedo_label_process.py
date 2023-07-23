@@ -180,16 +180,6 @@ def non_max_suppression_pseudo_decouple_multi_view(
             break  # time limit exceeded
 
     
-
-    # certain_cls = []
-    # for tensor in output_reg:
-    #     if tensor.numel() == 0:
-    #         certain_cls.append(torch.zeros((0, 6), device=prediction[0].device))
-    #         continue
-    #     max_conf_index = torch.argmax(tensor[:, 4])
-    #     tensor_with_max_conf = tensor[max_conf_index].unsqueeze(0)
-    #     certain_cls.append(tensor_with_max_conf)
-
     certain_cls = []
 
     for tensor in output_reg:

@@ -41,6 +41,10 @@ def _update_teacher_model(student, teacher, word_size=1, keep_rate=0.996):
             new_teacher_dict[key] = (
                 student_model_dict[key] * (1 - keep_rate) + value * keep_rate
             )
+        elif key.replace('module.', '') in student_model_dict.keys():
+            new_teacher_dict[key] = (
+                student_model_dict[key.replace('module.', '')]
+            )
         else:
             raise Exception("{} is not found in student model".format(key))
 
